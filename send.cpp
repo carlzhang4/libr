@@ -1,5 +1,7 @@
+#include <iostream>
 #include "src/core.hpp"
 #include "src/socket.hpp"
+using namespace std;
 int main(int argc, char *argv[]){
 	struct ibv_device			*ib_dev = NULL;
 	struct pingpong_context  	ctx;
@@ -17,7 +19,7 @@ int main(int argc, char *argv[]){
 		user_param.machine = SERVER;
 	}
 
-	ctx.cycle_buffer			= sysconf(_SC_PAGESIZE);
+	ctx.page_size				= sysconf(_SC_PAGESIZE);
 	ctx.cache_line_size			= get_cache_line_size();
 
 	user_param.ib_port 			= 1; //minimum 1
@@ -30,17 +32,19 @@ int main(int argc, char *argv[]){
 	user_param.connection_type	= RC;
 	user_param.post_list		= 1;
 	user_param.recv_post_list	= 1;
-	user_param.size				= 65536;
+	user_param.size				= 4096;
 	user_param.tx_depth			= 128;
 	user_param.rx_depth			= 512;
 	user_param.verb    			= SEND;
+
+	assert(user_param.size % ctx.cache_line_size == 0);
 
 	ib_dev = ctx_find_dev("mlx5_0");
 	ctx.context = ctx_open_device(ib_dev);
 	check_link(ctx.context,&user_param);
 	socket_connect(&user_param);
 
-	printf("Cycle Buffer    : %d\n",ctx.cycle_buffer);
+	printf("Pagesize        : %d\n",ctx.page_size);
 	printf("Cacheline Size  : %d\n",ctx.cache_line_size);
 
 	user_param.curr_mtu = set_mtu(ctx.context,user_param.ib_port,0);
@@ -59,12 +63,8 @@ int main(int argc, char *argv[]){
 			ALLOCATE(ctx.recv_sge_list, struct ibv_sge,  user_param.recv_post_list);
 			ALLOCATE(ctx.rwr, struct ibv_recv_wr,  user_param.recv_post_list);
 		}
-		ctx.size = user_param.size;
-		ctx.buff_size = INC(MAX(ctx.size, ctx.cycle_buffer),ctx.cache_line_size) * 2;
-		ctx.send_qp_buff_size = ctx.buff_size / 2;
-		printf("Cycle Buff Size : %d\n",ctx.cycle_buffer);
+		ctx.buff_size = MAX(user_param.size, ctx.page_size) * 2;
 		printf("Buff Size       : %ld\n",ctx.buff_size);
-		printf("Send QP Buff    : %ld\n",ctx.send_qp_buff_size);
 		if(user_param.connection_type==UD){
 			ctx.buff_size += ctx.cache_line_size;
 		}
@@ -88,11 +88,11 @@ int main(int argc, char *argv[]){
 
 		assert(ctx.pd = ibv_alloc_pd(ctx.context));
 
-		assert(ctx.buf = memalign(ctx.cycle_buffer,ctx.buff_size));
+		assert(ctx.buf = memalign(ctx.page_size,ctx.buff_size));
 		memset(ctx.buf, 0, ctx.buff_size);
 		srand(time(NULL));
-		for (int i = 0; i < ctx.buff_size; i++) {
-			((char*)ctx.buf)[i] = i%256;
+		for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
+			((int*)ctx.buf)[i] = i;
 		}
 
 		int flags = IBV_ACCESS_LOCAL_WRITE;
@@ -176,7 +176,7 @@ int main(int argc, char *argv[]){
 
 		my_dest.out_reads = user_param.out_reads;
 
-		my_dest.vaddr = (uintptr_t)ctx.buf + MAX(ctx.size,ctx.cycle_buffer);
+		my_dest.vaddr = (uintptr_t)ctx.buf + MAX(user_param.size,ctx.page_size);
 
 		memcpy(my_dest.gid.raw, temp_gid.raw, 16);
 	}
@@ -267,7 +267,7 @@ int main(int argc, char *argv[]){
 	if(user_param.machine == SERVER){
 		struct ibv_recv_wr	*bad_wr_recv;
 		int	size_per_qp = user_param.rx_depth / user_param.recv_post_list;
-		ctx.recv_sge_list[0].addr = (uintptr_t)ctx.buf+ctx.send_qp_buff_size;
+		ctx.recv_sge_list[0].addr = (uintptr_t)ctx.buf + ctx.buff_size / 2;
 
 		ctx.recv_sge_list[0].length = UD_EXTRA(user_param.connection_type,user_param.size);
 		ctx.recv_sge_list[0].lkey = ctx.mr->lkey;
@@ -311,6 +311,9 @@ int main(int argc, char *argv[]){
 			int wc_id = (int)wc[i].wr_id;
 			assert(wc[i].status == IBV_WC_SUCCESS);
 		}
+	}
+	for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
+		cout<<((int *)ctx.buf)[i]<<" ";
 	}
 	return 0;
 }

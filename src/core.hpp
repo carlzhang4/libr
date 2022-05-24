@@ -32,13 +32,10 @@
 #define MAX_SEND_SGE		(1)
 #define MAX_RECV_SGE		(1)
 
-#define MAX(size,cycle_buffer) ((size < cycle_buffer) ? (cycle_buffer) : (size))
+#define MAX(size,page_size) ((size < page_size) ? (page_size) : (size))
 
 #define ROUND_UP(value, alignment) (((value) % (alignment) == 0) ?  \
 		(value) : ((alignment) * ((value) / (alignment) + 1)))
-
-#define INC(size, cache_line_size) ((size > cache_line_size) ? \
-		ROUND_UP(size, cache_line_size) : (cache_line_size))
 
 #define UD_ADDITION         (40)
 
@@ -87,14 +84,12 @@ struct pingpong_context{
 	struct ibv_recv_wr			*rwr;
 	void						*buf;
 	int							cache_line_size;
-	int							cycle_buffer;
+	int							page_size;
 
 	uint64_t					my_addr;
 	uint64_t					rem_addr;
 
-	uint64_t					size;
 	uint64_t					buff_size;
-	uint64_t					send_qp_buff_size;
 };
 
 struct perftest_parameters{
