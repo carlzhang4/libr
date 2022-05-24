@@ -36,6 +36,7 @@ int main(int argc, char *argv[]){
 	user_param.tx_depth			= 128;
 	user_param.rx_depth			= 512;
 	user_param.verb    			= SEND;
+	user_param.use_event		= 0;
 
 	assert(user_param.size % ctx.cache_line_size == 0);
 
@@ -282,11 +283,16 @@ int main(int argc, char *argv[]){
 		struct ibv_send_wr 	*bad_wr = NULL;
 		assert(ibv_post_send(ctx.qp, &ctx.wr[0], &bad_wr) == 0);
 
+		if(user_param.use_event){
+			ctx_wait_event(ctx.channel);
+		}
+
 		struct ibv_wc *wc = NULL;
 		ALLOCATE(wc ,struct ibv_wc ,CTX_POLL_BATCH);
 		int ne;
 		do{
 			ne = ibv_poll_cq(ctx.send_cq, CTX_POLL_BATCH, wc);
+			printf("ne:%d\n",ne);
 		}while(ne==0);
 		printf("ne:%d\n",ne);
 		for (int i=0; i<ne; i++) {
@@ -297,14 +303,19 @@ int main(int argc, char *argv[]){
 	
 	if(user_param.machine==SERVER){
 		struct ibv_recv_wr  *bad_wr_recv = NULL;
-		usleep(10000);
+		usleep(100000);
 		assert(ibv_post_recv(ctx.qp, &ctx.rwr[0], &bad_wr_recv) == 0);
 		
+		if(user_param.use_event){
+			ctx_wait_event(ctx.channel);
+		}
+
 		struct ibv_wc *wc = NULL;
 		ALLOCATE(wc ,struct ibv_wc ,CTX_POLL_BATCH);
 		int ne;
 		do{
 			ne = ibv_poll_cq(ctx.recv_cq,CTX_POLL_BATCH,wc);
+			printf("ne:%d\n",ne);
 		}while(ne==0);
 		printf("ne:%d\n",ne);
 		for (int i=0; i<ne; i++) {

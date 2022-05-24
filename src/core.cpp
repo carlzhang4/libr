@@ -91,3 +91,11 @@ int get_cache_line_size(){
 
 	return size;
 }
+
+void ctx_wait_event(struct ibv_comp_channel *channel){
+	struct ibv_cq       *ev_cq;
+	void                *ev_ctx;
+	assert(ibv_get_cq_event(channel,&ev_cq,&ev_ctx) == 0);
+	ibv_ack_cq_events(ev_cq,1);
+	assert(ibv_req_notify_cq(ev_cq, 0) == 0);
+}

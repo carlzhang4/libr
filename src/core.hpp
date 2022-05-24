@@ -125,4 +125,6 @@ enum ibv_mtu set_mtu(struct ibv_context *context,uint8_t ib_port,int user_mtu);
 
 int get_cache_line_size();
 
+void ctx_wait_event(struct ibv_comp_channel *channel);
+
 #endif
