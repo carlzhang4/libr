@@ -3,8 +3,8 @@
 int main(int argc, char *argv[]){
 	struct ibv_device			*ib_dev = NULL;
 	struct pingpong_context  	ctx;
-	struct pingpong_dest	 	*my_dest  = NULL;
-	struct pingpong_dest		*rem_dest = NULL;
+	struct pingpong_dest	 	my_dest;
+	struct pingpong_dest		rem_dest;
 	struct perftest_parameters	user_param;
 
 	memset(&ctx, 0,sizeof(struct pingpong_context));
@@ -46,29 +46,13 @@ int main(int argc, char *argv[]){
 	user_param.curr_mtu = set_mtu(ctx.context,user_param.ib_port,0);
 	printf("MTU             : %d\n",128 << (user_param.curr_mtu));
 
-	ALLOCATE(my_dest, struct pingpong_dest, 1);
-	memset(my_dest, 0, sizeof(struct pingpong_dest)*1);
-	ALLOCATE(rem_dest, struct pingpong_dest, 1);
-	memset(rem_dest, 0, sizeof(struct pingpong_dest)*1);
+	memset(&my_dest, 0, sizeof(struct pingpong_dest)*1);
+	memset(&rem_dest, 0, sizeof(struct pingpong_dest)*1);
 
 	{/* alloc context */
-		ALLOCATE(ctx.qp, struct ibv_qp*, 1);
-		ALLOCATE(ctx.mr, struct ibv_mr*, 1);
-		ALLOCATE(ctx.buf, void* , 1);
-
-		if(user_param.machine == CLIENT){
-			ALLOCATE(ctx.my_addr,uint64_t,1);
-			ALLOCATE(ctx.rem_addr,uint64_t,1);
-		}else{
-			ALLOCATE(ctx.my_addr, uint64_t, 1);
-		}
-
 		if(user_param.machine == CLIENT){
 			ALLOCATE(ctx.sge_list, struct ibv_sge, user_param.post_list);
 			ALLOCATE(ctx.wr, struct ibv_send_wr, user_param.post_list);
-			if(user_param.connection_type==UD){
-				ALLOCATE(ctx.ah, struct ibv_ah*, 1);
-			}
 		}
 
 		if(user_param.machine==SERVER){ //only send/recv needs
@@ -104,11 +88,11 @@ int main(int argc, char *argv[]){
 
 		assert(ctx.pd = ibv_alloc_pd(ctx.context));
 
-		assert(ctx.buf[0] = memalign(ctx.cycle_buffer,ctx.buff_size));
-		memset(ctx.buf[0], 0, ctx.buff_size);
+		assert(ctx.buf = memalign(ctx.cycle_buffer,ctx.buff_size));
+		memset(ctx.buf, 0, ctx.buff_size);
 		srand(time(NULL));
 		for (int i = 0; i < ctx.buff_size; i++) {
-			((char*)ctx.buf[0])[i] = i%256;
+			((char*)ctx.buf)[i] = i%256;
 		}
 
 		int flags = IBV_ACCESS_LOCAL_WRITE;
@@ -119,7 +103,7 @@ int main(int argc, char *argv[]){
 		// } else if (user_param.verb == ATOMIC) {
 		// 	flags |= IBV_ACCESS_REMOTE_ATOMIC;
 		// }
-		assert(ctx.mr[0] = ibv_reg_mr(ctx.pd, ctx.buf[0], ctx.buff_size, flags));
+		assert(ctx.mr = ibv_reg_mr(ctx.pd, ctx.buf, ctx.buff_size, flags));
 		
 
 		//cqs
@@ -148,8 +132,8 @@ int main(int argc, char *argv[]){
 			default:  fprintf(stderr, "Unknown connection type \n");
 				exit(1);
 		}
-		ctx.qp[0] = ibv_create_qp(ctx.pd, &attr);
-		if(ctx.qp[0] == NULL && errno == ENOMEM){
+		ctx.qp = ibv_create_qp(ctx.pd, &attr);
+		if(ctx.qp == NULL && errno == ENOMEM){
 			fprintf(stderr, "Requested QP size might be too big. Try reducing TX depth and/or inline size.\n");
 			fprintf(stderr, "Current TX depth is %d and inline size is %d .\n", user_param.tx_depth, user_param.inline_size);
 		}
@@ -169,7 +153,7 @@ int main(int argc, char *argv[]){
 			case SEND  : attr_qp.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE;
 		}
 		flags |= IBV_QP_ACCESS_FLAGS;
-		assert(ibv_modify_qp(ctx.qp[0], &attr_qp, flags) == 0);
+		assert(ibv_modify_qp(ctx.qp, &attr_qp, flags) == 0);
 	}
 	
 
@@ -183,22 +167,22 @@ int main(int argc, char *argv[]){
 
 		struct ibv_port_attr attr_;
 		assert(ibv_query_port(ctx.context,user_param.ib_port,&attr_) == 0);
-		my_dest[0].lid = attr_.lid;
-		my_dest[0].gid_index = user_param.gid_index;
+		my_dest.lid = attr_.lid;
+		my_dest.gid_index = user_param.gid_index;
 
-		my_dest[0].qpn   = ctx.qp[0]->qp_num;
-		my_dest[0].psn   = lrand48() & 0xffffff;
-		my_dest[0].rkey  = ctx.mr[0]->rkey;
+		my_dest.qpn   = ctx.qp->qp_num;
+		my_dest.psn   = lrand48() & 0xffffff;
+		my_dest.rkey  = ctx.mr->rkey;
 
-		my_dest[0].out_reads = user_param.out_reads;
+		my_dest.out_reads = user_param.out_reads;
 
-		my_dest[0].vaddr = (uintptr_t)ctx.buf[0] + MAX(ctx.size,ctx.cycle_buffer);
+		my_dest.vaddr = (uintptr_t)ctx.buf + MAX(ctx.size,ctx.cycle_buffer);
 
-		memcpy(my_dest[0].gid.raw, temp_gid.raw, 16);
+		memcpy(my_dest.gid.raw, temp_gid.raw, 16);
 	}
 	
 
-	ctx_hand_shake(&user_param,&my_dest[0],&rem_dest[0]);
+	ctx_hand_shake(&user_param,&my_dest,&rem_dest);
 	
 	{/* ctx_connect, prepare IB resources for rtr/rts */
 		struct ibv_qp_attr attr;
@@ -208,27 +192,27 @@ int main(int argc, char *argv[]){
 		attr.ah_attr.src_path_bits = 0;
 		attr.ah_attr.port_num = user_param.ib_port;
 
-		attr.ah_attr.dlid = rem_dest[0].lid;
+		attr.ah_attr.dlid = rem_dest.lid;
 		attr.ah_attr.sl = 0; //service level default 0
 
 		attr.ah_attr.is_global = 1;
-		attr.ah_attr.grh.dgid = rem_dest[0].gid;
+		attr.ah_attr.grh.dgid = rem_dest.gid;
 		attr.ah_attr.grh.sgid_index = user_param.gid_index;
 		attr.ah_attr.grh.hop_limit = 0xFF;
 		attr.ah_attr.grh.traffic_class = 0;//default 0
 
 		if(user_param.connection_type != UD){
 			attr.path_mtu = user_param.curr_mtu;
-			attr.dest_qp_num = rem_dest[0].qpn;
-			attr.rq_psn = rem_dest[0].psn;
+			attr.dest_qp_num = rem_dest.qpn;
+			attr.rq_psn = rem_dest.psn;
 			flags |= (IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN);
 			if(user_param.connection_type == RC){
-				attr.max_dest_rd_atomic = my_dest[0].out_reads;
+				attr.max_dest_rd_atomic = my_dest.out_reads;
 				attr.min_rnr_timer = MIN_RNR_TIMER;
 				flags |= (IBV_QP_MIN_RNR_TIMER | IBV_QP_MAX_DEST_RD_ATOMIC);
 			}
 		}
-		assert(ibv_modify_qp(ctx.qp[0], &attr, flags) == 0);
+		assert(ibv_modify_qp(ctx.qp, &attr, flags) == 0);
 		if(user_param.machine == CLIENT){
 			//ctx_modify_qp_to_rts
 			int flags = IBV_QP_STATE;
@@ -236,27 +220,27 @@ int main(int argc, char *argv[]){
 			_attr->qp_state = IBV_QPS_RTS;
 
 			flags |= IBV_QP_SQ_PSN;
-			_attr->sq_psn = my_dest[0].psn;
+			_attr->sq_psn = my_dest.psn;
 
 			if(user_param.connection_type == RC){
 				_attr->timeout = DEF_QP_TIME;
 				_attr->retry_cnt = 7;
 				_attr->rnr_retry = 7;
-				_attr->max_rd_atomic  = rem_dest[0].out_reads;
+				_attr->max_rd_atomic  = rem_dest.out_reads;
 				flags |= (IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_MAX_QP_RD_ATOMIC);
 			}
-			assert(ibv_modify_qp(ctx.qp[0],_attr,flags) == 0);
+			assert(ibv_modify_qp(ctx.qp,_attr,flags) == 0);
 		}
 
 		if(user_param.connection_type==UD && user_param.machine==CLIENT){
-			assert(ctx.ah[0] = ibv_create_ah(ctx.pd,&(attr.ah_attr)));
+			assert(ctx.ah = ibv_create_ah(ctx.pd,&(attr.ah_attr)));
 		}
 	}
 
-	ctx_hand_shake(&user_param,&my_dest[0],&rem_dest[0]);
-	ctx_print_pingpong_data(&my_dest[0],&user_param,"local");
-	ctx_hand_shake(&user_param,&my_dest[0],&rem_dest[0]);
-	ctx_print_pingpong_data(&rem_dest[0],&user_param,"remote");
+	ctx_hand_shake(&user_param,&my_dest,&rem_dest);
+	ctx_print_pingpong_data(&my_dest,&user_param,"local");
+	ctx_hand_shake(&user_param,&my_dest,&rem_dest);
+	ctx_print_pingpong_data(&rem_dest,&user_param,"remote");
 	printf(RESULT_LINE);
 
 	if (user_param.use_event){
@@ -266,10 +250,10 @@ int main(int argc, char *argv[]){
 	
 	if(user_param.machine == CLIENT){
 		memset(&ctx.wr[0],0,sizeof(struct ibv_send_wr));
-		ctx.sge_list[0].addr = (uintptr_t)ctx.buf[0];
-		ctx.my_addr[0] = (uintptr_t)ctx.buf[0];
+		ctx.sge_list[0].addr = (uintptr_t)ctx.buf;
+		ctx.my_addr = (uintptr_t)ctx.buf;
 		ctx.sge_list[0].length = user_param.size;//if raweth, need minus crc
-		ctx.sge_list[0].lkey = ctx.mr[0]->lkey;
+		ctx.sge_list[0].lkey = ctx.mr->lkey;
 
 		ctx.wr[0].sg_list = &ctx.sge_list[0];
 		ctx.wr[0].num_sge = MAX_SEND_SGE;
@@ -283,20 +267,20 @@ int main(int argc, char *argv[]){
 	if(user_param.machine == SERVER){
 		struct ibv_recv_wr	*bad_wr_recv;
 		int	size_per_qp = user_param.rx_depth / user_param.recv_post_list;
-		ctx.recv_sge_list[0].addr = (uintptr_t)ctx.buf[0]+ctx.send_qp_buff_size;
+		ctx.recv_sge_list[0].addr = (uintptr_t)ctx.buf+ctx.send_qp_buff_size;
 
 		ctx.recv_sge_list[0].length = UD_EXTRA(user_param.connection_type,user_param.size);
-		ctx.recv_sge_list[0].lkey = ctx.mr[0]->lkey;
+		ctx.recv_sge_list[0].lkey = ctx.mr->lkey;
 
 		ctx.rwr[0].sg_list = &ctx.recv_sge_list[0];
 		ctx.rwr[0].num_sge = MAX_RECV_SGE;
 		ctx.rwr[0].wr_id = 0;
 		ctx.rwr[0].next=NULL;
 	}
-	assert(ctx_hand_shake(&user_param,&my_dest[0],&rem_dest[0]) == 0);
+	assert(ctx_hand_shake(&user_param,&my_dest,&rem_dest) == 0);
 	if(user_param.machine==CLIENT){
 		struct ibv_send_wr 	*bad_wr = NULL;
-		assert(ibv_post_send(ctx.qp[0], &ctx.wr[0], &bad_wr) == 0);
+		assert(ibv_post_send(ctx.qp, &ctx.wr[0], &bad_wr) == 0);
 
 		struct ibv_wc *wc = NULL;
 		ALLOCATE(wc ,struct ibv_wc ,CTX_POLL_BATCH);
@@ -314,7 +298,7 @@ int main(int argc, char *argv[]){
 	if(user_param.machine==SERVER){
 		struct ibv_recv_wr  *bad_wr_recv = NULL;
 		usleep(10000);
-		assert(ibv_post_recv(ctx.qp[0], &ctx.rwr[0], &bad_wr_recv) == 0);
+		assert(ibv_post_recv(ctx.qp, &ctx.rwr[0], &bad_wr_recv) == 0);
 		
 		struct ibv_wc *wc = NULL;
 		ALLOCATE(wc ,struct ibv_wc ,CTX_POLL_BATCH);

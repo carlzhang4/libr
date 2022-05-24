@@ -76,21 +76,21 @@ struct pingpong_context{
 	struct ibv_context			*context;
 	struct ibv_comp_channel		*channel;
 	struct ibv_pd				*pd;
-	struct ibv_mr				**mr;
+	struct ibv_mr				*mr;
 	struct ibv_cq				*send_cq;
 	struct ibv_cq				*recv_cq;
-	struct ibv_ah				**ah;
-	struct ibv_qp				**qp;
+	struct ibv_ah				*ah;
+	struct ibv_qp				*qp;
 	struct ibv_sge				*sge_list;
 	struct ibv_sge				*recv_sge_list;
 	struct ibv_send_wr			*wr;
 	struct ibv_recv_wr			*rwr;
-	void						**buf;
+	void						*buf;
 	int							cache_line_size;
 	int							cycle_buffer;
 
-	uint64_t					*my_addr;
-	uint64_t					*rem_addr;
+	uint64_t					my_addr;
+	uint64_t					rem_addr;
 
 	uint64_t					size;
 	uint64_t					buff_size;
