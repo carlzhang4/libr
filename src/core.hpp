@@ -86,9 +86,6 @@ struct pingpong_context{
 	int							cache_line_size;
 	int							page_size;
 
-	uint64_t					my_addr;
-	uint64_t					rem_addr;
-
 	uint64_t					buff_size;
 };
 

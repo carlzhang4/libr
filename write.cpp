@@ -35,7 +35,7 @@ int main(int argc, char *argv[]){
 	user_param.size				= 4096;
 	user_param.tx_depth			= 128;
 	user_param.rx_depth			= 512;
-	user_param.verb    			= SEND;
+	user_param.verb    			= READ;
 	user_param.use_event		= 0;
 
 	assert(user_param.size % ctx.cache_line_size == 0);
@@ -75,7 +75,6 @@ int main(int argc, char *argv[]){
 	}
 	printf("Post List       : %d\n",user_param.post_list);
 	printf("Recv Post List  : %d\n", user_param.recv_post_list);
-	printf("GID index       : %d\n", user_param.gid_index);
 	printf("Max inline data : %d[B]\n",user_param.inline_size);
 	printf("Outstand reads  : %d\n",user_param.out_reads);
 	printf(RESULT_LINE);
@@ -91,12 +90,16 @@ int main(int argc, char *argv[]){
 
 		assert(ctx.buf = memalign(ctx.page_size,ctx.buff_size));
 		memset(ctx.buf, 0, ctx.buff_size);
-		srand(time(NULL));
 		for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
 			((int*)ctx.buf)[i] = i;
 		}
 
 		int flags = IBV_ACCESS_LOCAL_WRITE;
+		if(user_param.verb == WRITE){
+			flags |= IBV_ACCESS_REMOTE_WRITE;
+		}else if(user_param.verb == READ){
+			flags |= IBV_ACCESS_REMOTE_READ;
+		}
 		// if (user_param.verb == WRITE) {
 		// 	flags |= IBV_ACCESS_REMOTE_WRITE;
 		// } else if (user_param.verb == READ) {
@@ -180,6 +183,8 @@ int main(int argc, char *argv[]){
 		my_dest.vaddr = (uintptr_t)ctx.buf + MAX(user_param.size,ctx.page_size);
 
 		memcpy(my_dest.gid.raw, temp_gid.raw, 16);
+
+		printf("GID index       : %d\n", user_param.gid_index);
 	}
 	
 
@@ -255,16 +260,23 @@ int main(int argc, char *argv[]){
 		ctx.sge_list[0].length = user_param.size;//if raweth, need minus crc
 		ctx.sge_list[0].lkey = ctx.mr->lkey;
 
+		if(user_param.verb == WRITE || user_param.verb == READ){
+			ctx.wr[0].wr.rdma.remote_addr	= rem_dest.vaddr;
+			ctx.wr[0].wr.rdma.rkey			= rem_dest.rkey;
+		}
 		ctx.wr[0].sg_list = &ctx.sge_list[0];
 		ctx.wr[0].num_sge = MAX_SEND_SGE;
 		ctx.wr[0].wr_id = 0;
 		ctx.wr[0].next = NULL;
 		ctx.wr[0].send_flags = IBV_SEND_SIGNALED;
 		ctx.wr[0].opcode = opcode_verbs_array[user_param.verb];
+		if((user_param.verb==SEND || user_param.verb==WRITE) && user_param.size <= user_param.inline_size){
+			ctx.wr[0].send_flags |= IBV_SEND_INLINE;
+		}
 		//ctx.wr[index].send_flags |= IBV_SEND_INLINE;
 	}
 
-	if(user_param.machine == SERVER){
+	if(user_param.machine == SERVER && user_param.verb == SEND){
 		struct ibv_recv_wr	*bad_wr_recv;
 		int	size_per_qp = user_param.rx_depth / user_param.recv_post_list;
 		ctx.recv_sge_list[0].addr = (uintptr_t)ctx.buf + ctx.buff_size / 2;
@@ -301,29 +313,34 @@ int main(int argc, char *argv[]){
 	}
 	
 	if(user_param.machine==SERVER){
-		struct ibv_recv_wr  *bad_wr_recv = NULL;
-		usleep(100000);
-		assert(ibv_post_recv(ctx.qp, &ctx.rwr[0], &bad_wr_recv) == 0);
-		
-		if(user_param.use_event){
-			ctx_wait_event(ctx.channel);
-		}
+		if(user_param.verb == WRITE || user_param.verb == READ){
+			usleep(3000000);
+		}else if(user_param.verb == SEND){
+			struct ibv_recv_wr  *bad_wr_recv = NULL;
+			usleep(100000);
+			assert(ibv_post_recv(ctx.qp, &ctx.rwr[0], &bad_wr_recv) == 0);
+			
+			if(user_param.use_event){
+				ctx_wait_event(ctx.channel);
+			}
 
-		struct ibv_wc *wc = NULL;
-		ALLOCATE(wc ,struct ibv_wc ,CTX_POLL_BATCH);
-		int ne;
-		do{
-			ne = ibv_poll_cq(ctx.recv_cq,CTX_POLL_BATCH,wc);
+			struct ibv_wc *wc = NULL;
+			ALLOCATE(wc ,struct ibv_wc ,CTX_POLL_BATCH);
+			int ne;
+			do{
+				ne = ibv_poll_cq(ctx.recv_cq,CTX_POLL_BATCH,wc);
+				printf("ne:%d\n",ne);
+			}while(ne==0);
 			printf("ne:%d\n",ne);
-		}while(ne==0);
-		printf("ne:%d\n",ne);
-		for (int i=0; i<ne; i++) {
-			int wc_id = (int)wc[i].wr_id;
-			assert(wc[i].status == IBV_WC_SUCCESS);
+			for (int i=0; i<ne; i++) {
+				int wc_id = (int)wc[i].wr_id;
+				assert(wc[i].status == IBV_WC_SUCCESS);
+			}
 		}
 	}
 	for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
 		cout<<((int *)ctx.buf)[i]<<" ";
 	}
+	cout<<endl;
 	return 0;
 }
