@@ -71,6 +71,15 @@ const char *link_layer_str(int8_t link_layer){
 	}
 }
 
+const char *verb_str(VerbType verb){
+	switch (verb) {
+		case WRITE: return "WRITE";
+		case READ:  return "READ";
+		case SEND:  return "SEND";
+		default:    return "Unknown";
+	}
+}
+
 int get_cache_line_size(){
 	int size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
 	if (size == 0) {

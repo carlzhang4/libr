@@ -2,6 +2,40 @@
 #include "src/core.hpp"
 #include "src/socket.hpp"
 using namespace std;
+
+void get_opt(perftest_parameters &user_param, int argc, char* argv[]){
+	int opt;
+	const char *optstring = "t:s:ie";
+	char* value = NULL;
+	while((opt = getopt(argc,argv,optstring)) != -1){
+		switch (opt){
+		case 't':
+			if(strcmp(optarg,"write")==0){
+				user_param.verb = WRITE;
+			}else if(strcmp(optarg,"send")==0){
+				user_param.verb = SEND;
+			}else if(strcmp(optarg,"read")==0){
+				user_param.verb = READ;
+			}else{
+				cout<<"Error, unknow verb\n";
+				exit(1);
+			}
+			break;
+		case 's':
+			user_param.machine = CLIENT;
+			user_param.servername = optarg;
+			break;
+		case 'i':
+			user_param.has_imm = 1;
+			break;
+		case 'e':
+			user_param.use_event = 1;
+			break;
+		default:
+			break;
+		}
+	}
+}
 int main(int argc, char *argv[]){
 	struct ibv_device			*ib_dev = NULL;
 	struct pingpong_context  	ctx;
@@ -11,14 +45,7 @@ int main(int argc, char *argv[]){
 
 	memset(&ctx, 0,sizeof(struct pingpong_context));
 	memset(&user_param, 0 , sizeof(struct perftest_parameters));
-	if(argc == 2){
-		user_param.machine = CLIENT;
-		user_param.servername = argv[1];
-		printf("servername : %s\n",user_param.servername);
-	}else{
-		user_param.machine = SERVER;
-	}
-
+	
 	ctx.page_size				= sysconf(_SC_PAGESIZE);
 	ctx.cache_line_size			= get_cache_line_size();
 
@@ -35,8 +62,17 @@ int main(int argc, char *argv[]){
 	user_param.size				= 4096;
 	user_param.tx_depth			= 128;
 	user_param.rx_depth			= 512;
-	user_param.verb    			= READ;
+	user_param.verb    			= SEND;
+	user_param.machine 			= SERVER;
 	user_param.use_event		= 0;
+	user_param.has_imm			= 0;
+
+	get_opt(user_param,argc,argv);
+	printf("Machine          : %s\n",user_param.machine == SERVER ? "SERVER" : "CLIENT");
+	printf("Verbs            : %s\n",verb_str(user_param.verb));
+	printf("HasImm           : %d\n",user_param.has_imm);
+	printf("UseEvent         : %d\n",user_param.use_event);
+
 
 	assert(user_param.size % ctx.cache_line_size == 0);
 
@@ -90,9 +126,16 @@ int main(int argc, char *argv[]){
 
 		assert(ctx.buf = memalign(ctx.page_size,ctx.buff_size));
 		memset(ctx.buf, 0, ctx.buff_size);
-		for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
-			((int*)ctx.buf)[i] = i;
+		if(user_param.machine == CLIENT){
+			for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
+				((int*)ctx.buf)[i] = i;
+			}
+		}else{
+			for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
+				((int*)ctx.buf)[i] = i + ctx.buff_size/(sizeof(int));
+			}
 		}
+		
 
 		int flags = IBV_ACCESS_LOCAL_WRITE;
 		if(user_param.verb == WRITE){
@@ -114,7 +157,7 @@ int main(int argc, char *argv[]){
 		assert(ctx.send_cq = ibv_create_cq(ctx.context, user_param.tx_depth, NULL, ctx.channel, user_param.eq_num));
 	
 		//if send/recv, needs this recv_cq
-		if(user_param.verb == SEND){
+		if(user_param.verb == SEND || (user_param.verb == WRITE && user_param.has_imm == 1)){
 			assert(ctx.recv_cq = ibv_create_cq(ctx.context, user_param.rx_depth, NULL, ctx.channel, user_param.eq_num));
 		}
 	
@@ -122,7 +165,7 @@ int main(int argc, char *argv[]){
 		struct ibv_qp_init_attr attr;
 		memset(&attr, 0, sizeof(struct ibv_qp_init_attr));
 		attr.send_cq = ctx.send_cq;
-		attr.recv_cq = (user_param.verb == SEND) ? ctx.recv_cq : ctx.send_cq;
+		attr.recv_cq = (ctx.recv_cq == NULL) ? ctx.send_cq : ctx.recv_cq;
 		attr.cap.max_inline_data = user_param.inline_size;
 		attr.cap.max_send_wr 	= user_param.tx_depth;
 		attr.cap.max_send_sge	= MAX_SEND_SGE; 
@@ -251,9 +294,12 @@ int main(int argc, char *argv[]){
 
 	if (user_param.use_event){
 		assert(ibv_req_notify_cq(ctx.send_cq, 0) == 0);
-		assert(ibv_req_notify_cq(ctx.recv_cq, 0) == 0);
+		if(ctx.recv_cq != NULL){//for read or write, there is no recv_cq
+			assert(ibv_req_notify_cq(ctx.recv_cq, 0) == 0);
+		}
 	}
 	
+	/* client setting wr */
 	if(user_param.machine == CLIENT){
 		memset(&ctx.wr[0],0,sizeof(struct ibv_send_wr));
 		ctx.sge_list[0].addr = (uintptr_t)ctx.buf;
@@ -264,32 +310,56 @@ int main(int argc, char *argv[]){
 			ctx.wr[0].wr.rdma.remote_addr	= rem_dest.vaddr;
 			ctx.wr[0].wr.rdma.rkey			= rem_dest.rkey;
 		}
+		if(user_param.has_imm){
+			ctx.wr[0].imm_data = htonl(0x1234);
+		}
 		ctx.wr[0].sg_list = &ctx.sge_list[0];
 		ctx.wr[0].num_sge = MAX_SEND_SGE;
-		ctx.wr[0].wr_id = 0;
+		ctx.wr[0].wr_id = 1000;
 		ctx.wr[0].next = NULL;
 		ctx.wr[0].send_flags = IBV_SEND_SIGNALED;
-		ctx.wr[0].opcode = opcode_verbs_array[user_param.verb];
+		if(user_param.has_imm == 0){
+			if(user_param.verb == SEND){
+				ctx.wr[0].opcode = IBV_WR_SEND;
+			}else if(user_param.verb == WRITE){
+				ctx.wr[0].opcode = IBV_WR_RDMA_WRITE;
+			}else if(user_param.verb == READ){
+				ctx.wr[0].opcode = IBV_WR_RDMA_READ;
+			}
+		}else{
+			if(user_param.verb == SEND){
+				ctx.wr[0].opcode = IBV_WR_SEND_WITH_IMM;
+			}else if(user_param.verb == WRITE){
+				ctx.wr[0].opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
+			}else if(user_param.verb == READ){
+				cout<<"Error, read can't be with imm\n";
+			}
+		}
+		
 		if((user_param.verb==SEND || user_param.verb==WRITE) && user_param.size <= user_param.inline_size){
 			ctx.wr[0].send_flags |= IBV_SEND_INLINE;
 		}
 		//ctx.wr[index].send_flags |= IBV_SEND_INLINE;
 	}
 
-	if(user_param.machine == SERVER && user_param.verb == SEND){
+	/* server setting rwr */
+	if(user_param.machine == SERVER && (user_param.verb == SEND || (user_param.verb == WRITE && user_param.has_imm == 1))){
 		struct ibv_recv_wr	*bad_wr_recv;
 		int	size_per_qp = user_param.rx_depth / user_param.recv_post_list;
-		ctx.recv_sge_list[0].addr = (uintptr_t)ctx.buf + ctx.buff_size / 2;
+		ctx.recv_sge_list[0].addr = (uintptr_t)ctx.buf;
 
 		ctx.recv_sge_list[0].length = UD_EXTRA(user_param.connection_type,user_param.size);
 		ctx.recv_sge_list[0].lkey = ctx.mr->lkey;
 
 		ctx.rwr[0].sg_list = &ctx.recv_sge_list[0];
 		ctx.rwr[0].num_sge = MAX_RECV_SGE;
-		ctx.rwr[0].wr_id = 0;
+		ctx.rwr[0].wr_id = 1001;
 		ctx.rwr[0].next=NULL;
 	}
+
 	assert(ctx_hand_shake(&user_param,&my_dest,&rem_dest) == 0);
+
+	/* polling cq */
 	if(user_param.machine==CLIENT){
 		struct ibv_send_wr 	*bad_wr = NULL;
 		assert(ibv_post_send(ctx.qp, &ctx.wr[0], &bad_wr) == 0);
@@ -307,17 +377,17 @@ int main(int argc, char *argv[]){
 		}while(ne==0);
 		printf("ne:%d\n",ne);
 		for (int i=0; i<ne; i++) {
-			int wc_id = (int)wc[i].wr_id;
+			cout<<"WC_ID:"<<(int)wc[i].wr_id<<endl;
 			assert(wc[i].status == IBV_WC_SUCCESS);
 		}
 	}
 	
 	if(user_param.machine==SERVER){
-		if(user_param.verb == WRITE || user_param.verb == READ){
+		if(user_param.has_imm == 0 && (user_param.verb == WRITE || user_param.verb == READ)){
 			usleep(3000000);
-		}else if(user_param.verb == SEND){
+		}else{
 			struct ibv_recv_wr  *bad_wr_recv = NULL;
-			usleep(100000);
+			usleep(10000);
 			assert(ibv_post_recv(ctx.qp, &ctx.rwr[0], &bad_wr_recv) == 0);
 			
 			if(user_param.use_event){
@@ -333,13 +403,16 @@ int main(int argc, char *argv[]){
 			}while(ne==0);
 			printf("ne:%d\n",ne);
 			for (int i=0; i<ne; i++) {
-				int wc_id = (int)wc[i].wr_id;
+				cout<<"WC_ID:"<<(int)wc[i].wr_id<<endl;
 				assert(wc[i].status == IBV_WC_SUCCESS);
+				if(user_param.has_imm){
+					cout<<"IMM:"<<hex<<ntohl(wc[i].imm_data)<<endl;
+				}
 			}
 		}
 	}
 	for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
-		cout<<((int *)ctx.buf)[i]<<" ";
+		cout<<dec<<((int *)ctx.buf)[i]<<" ";
 	}
 	cout<<endl;
 	return 0;

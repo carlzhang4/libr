@@ -45,8 +45,6 @@
 #define UC  (1)
 #define UD  (2)
 
-static enum ibv_wr_opcode opcode_verbs_array[] = {IBV_WR_SEND,IBV_WR_RDMA_WRITE,IBV_WR_RDMA_READ};
-
 #define ALLOCATE(var,type,size)                                     \
 { if((var = (type*)malloc(sizeof(type)*(size))) == NULL)        \
 	{ fprintf(stderr," Cannot Allocate\n"); exit(1);}}
@@ -55,8 +53,11 @@ const char* str_transport_type(enum ibv_transport_type t);
 
 const char *link_layer_str(int8_t link_layer);
 
+
 typedef enum {SERVER , CLIENT} MachineType;
 typedef enum { SEND , WRITE, READ, ATOMIC } VerbType;
+
+const char *verb_str(VerbType verb);
 
 struct pingpong_dest{
 	int					lid;
@@ -110,6 +111,7 @@ struct perftest_parameters{
 	int 						rx_depth;
 	int							eq_num;
 	VerbType					verb;
+	int							has_imm;
 };
 
 struct ibv_device* ctx_find_dev(char const *ib_devname);

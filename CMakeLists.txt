@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.0)
 
 project(libr)
 
+add_compile_options(-g)
+
 aux_source_directory(src SRCS)
 
 add_executable(send ${SRCS} send.cpp) 

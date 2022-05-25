@@ -260,7 +260,7 @@ int main(int argc, char *argv[]){
 		ctx.wr[0].wr_id = 0;
 		ctx.wr[0].next = NULL;
 		ctx.wr[0].send_flags = IBV_SEND_SIGNALED;
-		ctx.wr[0].opcode = opcode_verbs_array[user_param.verb];
+		// ctx.wr[0].opcode = opcode_verbs_array[user_param.verb];
 		//ctx.wr[index].send_flags |= IBV_SEND_INLINE;
 	}
 
