@@ -6,6 +6,7 @@ void socket_connect(struct perftest_parameters*	user_param){
 		printf("* Waiting for client to connect... *\n");
 		printf("************************************\n");
 	}
+	fflush(stdout);
 	struct addrinfo *res, *t;
 	struct addrinfo hints;
 	char *service = (char*)malloc(sizeof(int));

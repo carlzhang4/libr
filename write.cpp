@@ -120,6 +120,7 @@ int main(int argc, char *argv[]){
 	printf("Max inline data : %d[B]\n",user_param.inline_size);
 	printf("Outstand reads  : %d\n",user_param.out_reads);
 	printf(RESULT_LINE);
+	fflush(stdout);
 
 /********************************************* start ib_verbs code /**********************************************/
 
