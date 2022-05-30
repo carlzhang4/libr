@@ -73,10 +73,11 @@ const char *link_layer_str(int8_t link_layer){
 
 const char *verb_str(VerbType verb){
 	switch (verb) {
-		case WRITE: return "WRITE";
-		case READ:  return "READ";
-		case SEND:  return "SEND";
-		default:    return "Unknown";
+		case WRITE: 	return "WRITE";
+		case READ:  	return "READ";
+		case SEND:  	return "SEND";
+		case ATOMIC:  	return "ATOMIC";
+		default:   		return "Unknown";
 	}
 }
 

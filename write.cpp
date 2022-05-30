@@ -5,7 +5,7 @@ using namespace std;
 
 void get_opt(perftest_parameters &user_param, int argc, char* argv[]){
 	int opt;
-	const char *optstring = "t:s:ie";
+	const char *optstring = "t:s:cie";
 	char* value = NULL;
 	while((opt = getopt(argc,argv,optstring)) != -1){
 		switch (opt){
@@ -16,6 +16,8 @@ void get_opt(perftest_parameters &user_param, int argc, char* argv[]){
 				user_param.verb = SEND;
 			}else if(strcmp(optarg,"read")==0){
 				user_param.verb = READ;
+			}else if(strcmp(optarg,"atomic")==0){
+				user_param.verb = ATOMIC;
 			}else{
 				cout<<"Error, unknow verb\n";
 				exit(1);
@@ -30,6 +32,9 @@ void get_opt(perftest_parameters &user_param, int argc, char* argv[]){
 			break;
 		case 'e':
 			user_param.use_event = 1;
+			break;
+		case 'c':
+			user_param.atomic_type = CAS;
 			break;
 		default:
 			break;
@@ -66,6 +71,7 @@ int main(int argc, char *argv[]){
 	user_param.machine 			= SERVER;
 	user_param.use_event		= 0;
 	user_param.has_imm			= 0;
+	user_param.atomic_type		= FA;
 
 	get_opt(user_param,argc,argv);
 	printf("Machine          : %s\n",user_param.machine == SERVER ? "SERVER" : "CLIENT");
@@ -130,11 +136,16 @@ int main(int argc, char *argv[]){
 			for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
 				((int*)ctx.buf)[i] = i;
 			}
+			// if(user_param.verb == ATOMIC && user_param.atomic_type == CAS){
+			// 	((int*)ctx.buf)[0] = 0 + ctx.buff_size/(sizeof(int));
+			// 	((int*)ctx.buf)[1] = 1 + ctx.buff_size/(sizeof(int));
+			// }
 		}else{
 			for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
 				((int*)ctx.buf)[i] = i + ctx.buff_size/(sizeof(int));
 			}
 		}
+		
 		
 
 		int flags = IBV_ACCESS_LOCAL_WRITE;
@@ -142,17 +153,12 @@ int main(int argc, char *argv[]){
 			flags |= IBV_ACCESS_REMOTE_WRITE;
 		}else if(user_param.verb == READ){
 			flags |= IBV_ACCESS_REMOTE_READ;
+		}else if(user_param.verb == ATOMIC){
+			flags |= IBV_ACCESS_REMOTE_ATOMIC;
 		}
-		// if (user_param.verb == WRITE) {
-		// 	flags |= IBV_ACCESS_REMOTE_WRITE;
-		// } else if (user_param.verb == READ) {
-		// 	flags |= IBV_ACCESS_REMOTE_READ;//if iwarp, add remote_write
-		// } else if (user_param.verb == ATOMIC) {
-		// 	flags |= IBV_ACCESS_REMOTE_ATOMIC;
-		// }
+
 		assert(ctx.mr = ibv_reg_mr(ctx.pd, ctx.buf, ctx.buff_size, flags));
 		
-
 		//cqs
 		assert(ctx.send_cq = ibv_create_cq(ctx.context, user_param.tx_depth, NULL, ctx.channel, user_param.eq_num));
 	
@@ -309,6 +315,9 @@ int main(int argc, char *argv[]){
 		if(user_param.verb == WRITE || user_param.verb == READ){
 			ctx.wr[0].wr.rdma.remote_addr	= rem_dest.vaddr;
 			ctx.wr[0].wr.rdma.rkey			= rem_dest.rkey;
+		}else if(user_param.verb == ATOMIC){
+			ctx.wr[0].wr.atomic.remote_addr	= rem_dest.vaddr;
+			ctx.wr[0].wr.atomic.rkey		= rem_dest.rkey;
 		}
 		if(user_param.has_imm){
 			ctx.wr[0].imm_data = htonl(0x1234);
@@ -333,6 +342,16 @@ int main(int argc, char *argv[]){
 				ctx.wr[0].opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
 			}else if(user_param.verb == READ){
 				cout<<"Error, read can't be with imm\n";
+			}
+		}
+		if (user_param.verb == ATOMIC){
+			if(user_param.atomic_type == FA){
+				ctx.wr[0].opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
+				ctx.wr[0].wr.atomic.compare_add = 100;//atomic add value
+			}else if(user_param.atomic_type == CAS){
+				ctx.wr[0].opcode = IBV_WR_ATOMIC_CMP_AND_SWP;
+				ctx.wr[0].wr.atomic.swap = 1000;//atomic swap value
+				ctx.wr[0].wr.atomic.compare_add = (((uint64_t)3073)<<32) + 30720;//atomic add value
 			}
 		}
 		
@@ -383,7 +402,7 @@ int main(int argc, char *argv[]){
 	}
 	
 	if(user_param.machine==SERVER){
-		if(user_param.has_imm == 0 && (user_param.verb == WRITE || user_param.verb == READ)){
+		if(user_param.has_imm == 0 && (user_param.verb == WRITE || user_param.verb == READ || user_param.verb == ATOMIC)){
 			usleep(3000000);
 		}else{
 			struct ibv_recv_wr  *bad_wr_recv = NULL;
@@ -413,6 +432,10 @@ int main(int argc, char *argv[]){
 	}
 	for (int i = 0; i < ctx.buff_size/(sizeof(int)); i++) {
 		cout<<dec<<((int *)ctx.buf)[i]<<" ";
+		if(i+1 == ctx.buff_size/(sizeof(int))/2){
+			cout<<endl;
+			cout<<endl;
+		}
 	}
 	cout<<endl;
 	return 0;

@@ -56,6 +56,7 @@ const char *link_layer_str(int8_t link_layer);
 
 typedef enum {SERVER , CLIENT} MachineType;
 typedef enum { SEND , WRITE, READ, ATOMIC } VerbType;
+typedef enum { FA , CAS } AtomicType;
 
 const char *verb_str(VerbType verb);
 
@@ -111,6 +112,7 @@ struct perftest_parameters{
 	int 						rx_depth;
 	int							eq_num;
 	VerbType					verb;
+	AtomicType					atomic_type;
 	int							has_imm;
 };
 
