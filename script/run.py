@@ -7,7 +7,7 @@ import threading
 import time
 import os
 #############################defines
-MAX_LINE = 8
+MAX_LINE = 5
 STATUS_RUNNING = "\033[4;33m Running:\t \033[0m"
 STATUS_DONE = "\033[37;42m Done:\t \033[0m"
 STATUS_CRASH = "\033[1;31;40m Error:\t \033[0m"
@@ -62,7 +62,7 @@ if __name__ == "__main__":
 	machine_ips = ["10.0.0.5", "10.0.0.6"]
 	log_pair = {"../all_logs" : "/home/cj/study/libr/log"} # dest_path : remote_log
 	sync_pairs = {#remote_path : cur_file
-		"/home/cj/study/libr/build" : "../build/write"
+		"/home/cj/study/libr/build" : "../build/demo"
 	}
 	run_cmd_path = "/home/cj/study/libr/build"
 	
@@ -70,22 +70,25 @@ if __name__ == "__main__":
 		n=0
 		while(($n<6))
 		do
-			ls |tee ../log
-			echo $n |tee -a ../log
+			ls | tee ../log
+			echo $n | tee -a ../log
 			n=$((n+1))
 			sleep 1
 		done
 	"""
-	cmd = "./write"
+	cmd = "./demo | tee ../log"
 
 	#initial nodes
+	index = 0
 	for ip in machine_ips:
+		cmd = "./demo %d %s %d | tee ../log" %(index, machine_ips[0], len(machine_ips))
+		index = index + 1
 		nodes[ip] = Node(user, ip, run_cmd_path, cmd)
 	
 	if len(sys.argv) == 2 and sys.argv[1] == "kill":
 		print("Killing processes: %s"%cmd)
-		for node in nodes.values():
-			kill(node,cmd)
+		for ip in machine_ips:
+			kill(nodes[ip],nodes[ip].cmd)
 		exit(0)
 
 	#transfer executable file

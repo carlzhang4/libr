@@ -1,6 +1,7 @@
 #include <iostream>
 #include "src/core.hpp"
 #include "src/socket.hpp"
+#include "src/util.hpp"
 using namespace std;
 
 void get_opt(perftest_parameters &user_param, int argc, char* argv[]){

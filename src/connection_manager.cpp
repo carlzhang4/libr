@@ -1,11 +1,11 @@
 #include "connection_manager.hpp"
 #include "util.hpp"
-void sync(void* sendData, void** receivedData, uint64_t sendDataLength) {
+void sync(void* sendData, void** receivedData, uint64_t sendDataLength, std::string serverIp, uint32_t clientNumber) noexcept {
     addrinfo hints{};
     // Initialize Server Info
     hints.ai_socktype = SOCK_STREAM;
     addrinfo* serverAddress{nullptr};
-    getaddrinfo(SERVER_IP, SERVER_PORT, &hints, &serverAddress);
+    getaddrinfo(serverIp.c_str(), SERVER_PORT, &hints, &serverAddress);
     // Connect To Server
     auto socketToServer = socket(serverAddress->ai_family, serverAddress->ai_socktype, serverAddress->ai_protocol);
     auto isConnected = connect(socketToServer, serverAddress->ai_addr, serverAddress->ai_addrlen);
@@ -13,16 +13,16 @@ void sync(void* sendData, void** receivedData, uint64_t sendDataLength) {
     // Send Sync Data
     send(socketToServer, sendData, sendDataLength, 0);
     uint64_t readBytes = 0;
-    uint64_t receivedDataLength = (CLIENT_NUMBER - 1) * sendDataLength;
+    uint64_t receivedDataLength = (clientNumber - 1) * sendDataLength;
     *receivedData = reinterpret_cast<void*>(new uint8_t[receivedDataLength]);
     // Receive Sync Data
     while (readBytes != receivedDataLength) {
-        readBytes += recv(socketToServer, (*receivedData) + readBytes, receivedDataLength - readBytes, 0);
+        readBytes += recv(socketToServer, (void*)((uint64_t)(*receivedData)+readBytes), receivedDataLength - readBytes, 0);
     }
     close(socketToServer);
 }
 
-void syncServer(uint64_t receivedDataLength) {
+void syncServer(uint64_t receivedDataLength, uint32_t clientNumber) noexcept {
     addrinfo hints{};
     // Initialize Server Info
     hints.ai_family = AF_INET;
@@ -35,11 +35,11 @@ void syncServer(uint64_t receivedDataLength) {
     auto isBound = bind(socketListen, serverBindAddress->ai_addr, serverBindAddress->ai_addrlen);
     // Start Listening Port
     auto isListening = listen(socketListen, 1024);
-    decltype(socketListen) socketClients[CLIENT_NUMBER]{};
-    void* syncData[CLIENT_NUMBER]{};
+    decltype(socketListen) socketClients[clientNumber]{};
+    void* syncData[clientNumber]{};
     freeaddrinfo(serverBindAddress);
     // Receive Sync Data
-    for (int i = 0; i < CLIENT_NUMBER; i++) {
+    for (int i = 0; i < clientNumber; i++) {
         // Accept Connection
         sockaddr_storage connectionAddress;
         socklen_t connectionLength = sizeof(connectionAddress);
@@ -49,14 +49,14 @@ void syncServer(uint64_t receivedDataLength) {
         // Receive Sync Data
         uint64_t readBytes = 0;
         while (readBytes != receivedDataLength) {
-            readBytes += recv(socketConnection, syncData[i]+readBytes, receivedDataLength-readBytes, 0);
+            readBytes += recv(socketConnection, (void*)((uint64_t)(syncData[i])+readBytes), receivedDataLength-readBytes, 0);
         }
     }
 
     // Sent Sync Data
-    for (int i = 0; i < CLIENT_NUMBER; i++) {
+    for (int i = 0; i < clientNumber; i++) {
         auto socketConnection = socketClients[i];
-        for (int j = 0; j < CLIENT_NUMBER; j++) {
+        for (int j = 0; j < clientNumber; j++) {
             if (j != i) {
                 send(socketConnection, syncData[j], receivedDataLength, 0);
             }
@@ -65,7 +65,7 @@ void syncServer(uint64_t receivedDataLength) {
     }
 
     close(socketListen);
-    for (int i = 0; i < CLIENT_NUMBER; i++) {
+    for (int i = 0; i < clientNumber; i++) {
         delete [] reinterpret_cast<uint8_t*>(syncData[i]);
     }
 }

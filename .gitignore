@@ -1,2 +1,4 @@
 /build
 *.pcap
+all_logs
+.vscode
