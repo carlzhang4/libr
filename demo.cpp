@@ -1,77 +1,63 @@
 
 #include <thread>
 #include <cstdio>
+#include <stdio.h>
+#include "src/util.hpp"
 #include "src/nano_coroutine.hpp"
 #include "src/connection_manager.hpp"
 
 // Pass Parameters Like Normal Function
-auto asymmetricTransferCoroutine(int processId, char* bufferOutput) -> nano_coroutine::AsyncTask {
+auto asymmetricTransferCoroutine(int nodeId, char* bufferOutput) -> nano_coroutine::AsyncTask {
     for (int i = 0; i < 2; i++) {
         sprintf(bufferOutput, "[%d]: This is the message from asymmetric-transfered coroutine\n", i);
         ASYMMETRIC_TRANSFER();  // Asymmetric Transfer, Return To the Caller
         // Resume Here
-        printf("ProcessId[%d]: Resumed!\n", processId);
+        printf("nodeId[%d]: Resumed!\n", nodeId);
     }
     co_return;
 }
 
-auto symmetricTransferCoroutine(int processId, int coroutineId) -> nano_coroutine::AsyncTask {
+auto symmetricTransferCoroutine(int nodeId, int coroutineId) -> nano_coroutine::AsyncTask {
     for (int i = 0; i < 2; i++) {
-        printf("ProcessId: %d, CoroutineId: %d, ExecutionCount: %d\n", processId, coroutineId, i);
+        printf("nodeId: %d, CoroutineId: %d, ExecutionCount: %d\n", nodeId, coroutineId, i);
         SYMMETRIC_TRANSFER();   // Symmetric Transfer, Continue To Next Coroutine In ReadyTaskPool
         // Resume Here
     }
     co_return;
 }
 
+using namespace std;
+
+void get_opt(UserParam &user_param,int argc, char* argv[]){
+	int opt;
+	const char *optstring = "n:i:s:";
+	while((opt = getopt(argc,argv,optstring)) != -1){
+		switch (opt){
+		case 'n':
+			user_param.totalProcess = stoi(optarg);
+			break;
+		case 'i':
+			user_param.nodeId = stoi(optarg);
+			break;
+		case 's':
+			user_param.serverIp = string(optarg);
+			break;
+		default:
+			printf("Unknow parameter\n");
+		}
+	}
+}
 int main(int argc, char *argv[]) {
-    using namespace std;
-    if (argc < 4) {
-        printf("Too Few Arguments...\n");
-        printf("Usage: %s [processId] [serverIp] [totalProcess]\n", argv[0]);
-        printf("Example: %s 0 192.168.8.8 2\n", argv[0]);
-        return 1;
-    }
-    // Deal With Command Line Parameters
-    auto processId = stoi(string(argv[1]));
-    auto serverIp = string(argv[2]);
-    auto totalProcess = stoi(string(argv[3]));
-    auto syncDataLength = sizeof(decltype(processId));
-    printf("ProcessId: %d, ServerIp: %s, TotalProcess: %d\n", processId, serverIp.c_str(), totalProcess);
-    // Sync Server Process
-    // C++ thread (Since CXX11)
-    thread serverThread{};
-    if (processId == 0) {
-        // Create Sync Server Thread To Avoid Blocking
-        serverThread = thread(syncServer, syncDataLength, totalProcess);
-        // ******* NOTICE *******
-        // When Passing Refrence To Thread Function, Use std::ref()
-        // For Example:
-        // void Function(int a, int& b, int c);
-        // thread(Function, a, std::ref(b), c) ........ Right ^_^
-        // thread(Function, a, b, c) .................. Wrong @_@
-    }
-    sleep(1);   // Waiting For Server Start Up
-    // Sync Client Start
-    decltype(processId) *receivedProcessId{nullptr};
-    sync(
-        reinterpret_cast<void*>(&processId),
-        reinterpret_cast<void**>(&receivedProcessId),
-        syncDataLength,
-        serverIp,
-        totalProcess);
-    // Finish Sync And Join Server Thread
-    if (processId == 0) {
-        serverThread.join();
-    }
-    // Validate Synced Data
-    for (int i = 0; i < totalProcess - 1; i++) {
-        cout << "Synced Data: " << receivedProcessId[i] << endl;
-    }
+   
+	UserParam user_param;
+	get_opt(user_param, argc, argv);
+	cout<<user_param.nodeId<<endl;
+    socket_init(user_param);
+
     char bufferOutput[100]{};
     // Create Coroutine And Get Coroutine Handler
     // Asymmetric Transfer Coroutine
-    auto coroutineHandler = asymmetricTransferCoroutine(processId, bufferOutput);       // Pass Parameters Like Normal Function
+    auto coroutineHandler = asymmetricTransferCoroutine(user_param.nodeId, bufferOutput);       // Pass Parameters Like Normal Function
     // Resume To Execute Coroutine
     coroutineHandler.resume();
     cout << bufferOutput;
@@ -87,7 +73,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < MAX_COROUTINE_NUMBER; i++) {
         // Every Thread Has Its Own TaskPool And ReadyTaskPool,
         // Therefore, It Is Thread-Safe
-        nano_coroutine::taskPool[i] = symmetricTransferCoroutine(processId, i);
+        nano_coroutine::taskPool[i] = symmetricTransferCoroutine(user_param.nodeId, i);
     }
     
     {
@@ -107,4 +93,6 @@ int main(int argc, char *argv[]) {
     }
     
     cout << "Exited...." << endl;
+	fflush(stdout);
+	return 0;
 }

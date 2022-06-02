@@ -6,6 +6,7 @@ from reprint import output
 import threading
 import time
 import os
+import json5
 #############################defines
 MAX_LINE = 5
 STATUS_RUNNING = "\033[4;33m Running:\t \033[0m"
@@ -21,7 +22,7 @@ def kill(node, cmd):
 	for line in iter(stdout.readline,""): 
 		print(line)
 def fetch_log(nodes,pairs):
-	for node in nodes.values():
+	for node in nodes:
 		for gather_log_path,remote_file in pairs.items():
 			log_post_fix = node.ip+"_"+time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
 			res = os.system("scp %s@%s:%s %s"%(node.user, node.ip, remote_file, gather_log_path+"/"+log_post_fix))
@@ -29,7 +30,7 @@ def fetch_log(nodes,pairs):
 				print("ERROR of fetch log")
 				exit(1)
 def sync(nodes,pairs):
-	for node in nodes.values():
+	for node in nodes:
 		for remote_path,f in pairs.items():
 			res = os.system("scp %s %s@%s:%s"%(f, node.user, node.ip, remote_path))
 			if res != 0:
@@ -40,12 +41,17 @@ def task(node):
 	key = paramiko.AutoAddPolicy()
 	ssh.set_missing_host_key_policy(key)
 	ssh.connect(node.ip, 22, node.user, '' ,timeout=5)
-	stdin, stdout, stderr = ssh.exec_command('cd %s && %s'%(node.path,node.cmd))
+	stdin, stdout, stderr = ssh.exec_command('cd %s && rm log && %s'%(node.path,node.cmd))
+	
+	node.output.append("Run task: node.ip:%s node.cmd:%s"%(node.ip,node.cmd))
+	node.output.pop(0)
 	
 	for line in iter(stdout.readline,""): 
 		node.output.append(line.replace("\n", "")[:200])
 		node.output.pop(0)
 	node.status = STATUS_DONE
+	time.sleep(0.5)
+	ssh.close()
 
 class Node:
 	def __init__(self, user, ip, path, cmd):
@@ -57,60 +63,55 @@ class Node:
 		self.status = STATUS_RUNNING 
 
 if __name__ == "__main__":
-	nodes = {}
-	user = "cj"
-	machine_ips = ["10.0.0.5", "10.0.0.6"]
-	log_pair = {"../all_logs" : "/home/cj/study/libr/log"} # dest_path : remote_log
-	sync_pairs = {#remote_path : cur_file
-		"/home/cj/study/libr/build" : "../build/demo"
-	}
-	run_cmd_path = "/home/cj/study/libr/build"
-	
-	cmd = """
-		n=0
-		while(($n<6))
-		do
-			ls | tee ../log
-			echo $n | tee -a ../log
-			n=$((n+1))
-			sleep 1
-		done
-	"""
-	cmd = "./demo | tee ../log"
+	nodes = []
+	threads = []
 
+	f = open('config.json5')
+	data = json5.load(f)
+	user 			= data["user"]
+	machine_ips 	= data["machine_ips"]
+	log_pair 		= data["log_pair"]
+	sync_pairs 		= data["sync_pairs"]
+	run_cmd_path 	= data["run_cmd_path"]
+	base_cmd 		= data["base_cmd"]
+	
+	base_cmd += " -s %s "%machine_ips[0]  #server ip
 	#initial nodes
 	index = 0
 	for ip in machine_ips:
-		cmd = "./demo %d %s %d | tee ../log" %(index, machine_ips[0], len(machine_ips))
-		index = index + 1
-		nodes[ip] = Node(user, ip, run_cmd_path, cmd)
+		cmd = base_cmd + " -n %d -i %d "%(len(machine_ips), index)
+		cmd += " |tee log"
+		print(cmd)
+		index += 1
+		nodes.append(Node(user, ip, run_cmd_path, cmd))
 	
 	if len(sys.argv) == 2 and sys.argv[1] == "kill":
 		print("Killing processes: %s"%cmd)
-		for ip in machine_ips:
-			kill(nodes[ip],nodes[ip].cmd)
+		for node in nodes:
+			kill(node,node.cmd)
 		exit(0)
 
 	#transfer executable file
 	sync(nodes,sync_pairs)
 
 	#run asyc
-	for node in nodes.values():
-		threading.Thread(target=task, args=([node])).start()
-
+	for node in nodes:
+		thread = threading.Thread(target=task, args=([node]))
+		thread.start()
+		threads.append(thread)
 	#print result
 	with output(initial_len=len(machine_ips)*(MAX_LINE+1), interval=0) as output_lines:
 		while True:
 			cur_line = 0
-			for ip in machine_ips:
-				output_lines[cur_line] = ip + " : " + nodes[ip].status
+			for node in nodes:
+				output_lines[cur_line] = node.ip + " : " + node.status
 				cur_line += 1
 				for j in range(MAX_LINE):
-					output_lines[cur_line] = nodes[ip].output[j]
+					output_lines[cur_line] = node.output[j]
 					cur_line += 1
 			num_done = 0
-			for ip in machine_ips:
-				if nodes[ip].status != STATUS_RUNNING:
+			for node in nodes:
+				if node.status != STATUS_RUNNING:
 					num_done+=1
 			if num_done == len(machine_ips):
 				break

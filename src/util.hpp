@@ -4,9 +4,17 @@
 #include <stdio.h>
 #include <string.h>
 
+using namespace std;
+
 #define SUCCESS 0
 #define FAILURE 1
 
+class UserParam{
+	public:
+		int nodeId;
+		string serverIp;
+		int totalProcess;
+};
 // #define DEBUG
 // #define INFO
 
