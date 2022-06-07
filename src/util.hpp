@@ -2,7 +2,8 @@
 #define __UTIL_HPP__
 
 #include <stdio.h>
-#include <string.h>
+#include <string>
+#include <infiniband/verbs.h>
 
 using namespace std;
 
@@ -15,7 +16,37 @@ class UserParam{
 		string serverIp;
 		int numNodes;
 		int* sockfd;
+
+		//system param, not changable
+		uint8_t						ib_port;
+		int							gid_index;
+		enum ibv_mtu				cur_mtu;
+		int							page_size;
+		int							cacheline_size;
+		struct ibv_context			*context;
 };
+
+struct PingPongInfo{
+	int					lid;
+	int 				qpn;
+	int 				psn;
+	unsigned			rkey;
+	unsigned long long 	vaddr;
+	union ibv_gid		gid;
+	int					gid_index;
+	int					out_reads;
+};
+
+class QpHandler{
+	public:
+		struct ibv_qp* qp;
+		struct ibv_pd* pd;
+};
+
+#define ALLOCATE(var,type,size)                                     \
+{ if((var = (type*)malloc(sizeof(type)*(size))) == NULL)        \
+	{ fprintf(stderr," Cannot Allocate\n"); exit(1);}}
+
 #define DEBUG
 #define INFO
 

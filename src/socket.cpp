@@ -200,6 +200,7 @@ int ctx_hand_shake(struct perftest_parameters* user_param, struct pingpong_dest 
 		assert((*read_func_ptr)(rem_dest,user_param) == 0);
 		assert((*write_func_ptr)(my_dest,user_param) == 0);
 	}
+	return 0;
 }
 
 void ctx_print_pingpong_data(struct pingpong_dest *element, struct perftest_parameters* user_param, char const* side){

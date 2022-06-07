@@ -2,6 +2,7 @@
 #include <thread>
 #include <cstdio>
 #include <stdio.h>
+#include "src/core.hpp"
 #include "src/util.hpp"
 #include "src/nano_coroutine.hpp"
 #include "src/connection_manager.hpp"
@@ -52,27 +53,23 @@ void get_opt(UserParam &user_param,int argc, char* argv[]){
         user_param.sockfd = new int;
     }
 
-    LOG_I("nodeId:%d",user_param.nodeId);
+    user_param.ib_port = 1;//minimum 1
+    user_param.gid_index = 2;//minimum 1
+    user_param.page_size = sysconf(_SC_PAGESIZE);
+    user_param.cacheline_size = get_cache_line_size();
+
+    LOG_I("nodeId:%d numNodes:%d",user_param.nodeId,user_param.numNodes);
 }
 
-struct Test{
-	int					id;
-    char                s;
-};
 
 int main(int argc, char *argv[]) {
    
 	UserParam user_param;
 	get_opt(user_param, argc, argv);
     socket_init(user_param);
-
-    Test *a = new Test[user_param.numNodes]();
-    a[0].id = user_param.nodeId;
-    a[0].s = 'x';
-    exchange_data(user_param, (char*)a, sizeof(Test));
-    for(int i=0;i<user_param.numNodes;i++){
-        cout<<a[i].id << " " <<a[i].s <<endl;
-    }
+    roce_init(user_param);
+    PingPongInfo *info = new PingPongInfo[user_param.numNodes]();
+    // exchange_data(user_param, (char*)info, sizeof(PingPongInfo));
     
 
     char bufferOutput[100]{};

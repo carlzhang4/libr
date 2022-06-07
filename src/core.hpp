@@ -13,6 +13,7 @@
 #include <malloc.h>
 #include <signal.h>
 #include <infiniband/verbs.h>
+#include "util.hpp"
 
 #define BASIC_ADDR_FMT " %s address: LID %#04x QPN %#06x PSN %#06x"
 #define READ_FMT       " OUT %#04x"
@@ -127,5 +128,9 @@ enum ibv_mtu set_mtu(struct ibv_context *context,uint8_t ib_port,int user_mtu);
 int get_cache_line_size();
 
 void ctx_wait_event(struct ibv_comp_channel *channel);
+
+void roce_init(UserParam &user_param);
+
+void create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info, QpHandler &qp_handler);
 
 #endif
