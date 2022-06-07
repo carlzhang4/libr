@@ -50,7 +50,7 @@ def task(node):
 		node.output.append(line.replace("\n", "")[:200])
 		node.output.pop(0)
 	node.status = STATUS_DONE
-	time.sleep(0.5)
+	time.sleep(1)
 	ssh.close()
 
 class Node:

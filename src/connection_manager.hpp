@@ -22,4 +22,5 @@
 void sync(void* sendData, void** receivedData, uint64_t sendDataLength, std::string serverIp, uint32_t clientNumber) noexcept;
 void syncServer(uint64_t receivedDataLength, uint32_t clientNumber) noexcept;
 void socket_init(UserParam &user_param);
+void exchange_data(UserParam &user_param, char* data, int size);
 #endif

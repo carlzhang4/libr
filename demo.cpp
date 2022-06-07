@@ -34,7 +34,7 @@ void get_opt(UserParam &user_param,int argc, char* argv[]){
 	while((opt = getopt(argc,argv,optstring)) != -1){
 		switch (opt){
 		case 'n':
-			user_param.totalProcess = stoi(optarg);
+			user_param.numNodes = stoi(optarg);
 			break;
 		case 'i':
 			user_param.nodeId = stoi(optarg);
@@ -43,16 +43,37 @@ void get_opt(UserParam &user_param,int argc, char* argv[]){
 			user_param.serverIp = string(optarg);
 			break;
 		default:
-			printf("Unknow parameter\n");
+			LOG_E("Unknow parameter");
 		}
 	}
+    if(user_param.nodeId == 0){
+        user_param.sockfd = new int[user_param.numNodes];//zero is left unused
+    }else{
+        user_param.sockfd = new int;
+    }
+
+    LOG_I("nodeId:%d",user_param.nodeId);
 }
+
+struct Test{
+	int					id;
+    char                s;
+};
+
 int main(int argc, char *argv[]) {
    
 	UserParam user_param;
 	get_opt(user_param, argc, argv);
-	cout<<user_param.nodeId<<endl;
     socket_init(user_param);
+
+    Test *a = new Test[user_param.numNodes]();
+    a[0].id = user_param.nodeId;
+    a[0].s = 'x';
+    exchange_data(user_param, (char*)a, sizeof(Test));
+    for(int i=0;i<user_param.numNodes;i++){
+        cout<<a[i].id << " " <<a[i].s <<endl;
+    }
+    
 
     char bufferOutput[100]{};
     // Create Coroutine And Get Coroutine Handler
