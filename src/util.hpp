@@ -39,8 +39,19 @@ struct PingPongInfo{
 
 class QpHandler{
 	public:
+		struct ibv_cq* send_cq;
+		struct ibv_cq* recv_cq;
 		struct ibv_qp* qp;
 		struct ibv_pd* pd;
+		struct ibv_mr* mr;
+		struct ibv_sge* send_sge_list;
+		struct ibv_sge* recv_sge_list;
+		struct ibv_send_wr* send_wr;
+		struct ibv_recv_wr* recv_wr;
+		size_t buf;
+		int max_inline_size;
+		int num_wrs;
+		int num_sges;
 };
 
 #define ALLOCATE(var,type,size)                                     \

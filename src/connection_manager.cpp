@@ -16,6 +16,8 @@ void socket_init(UserParam &user_param){
         assert(getaddrinfo(NULL,SERVER_PORT,&hints,&server_address) >= 0);
         auto sockfd = socket(server_address->ai_family, server_address->ai_socktype, server_address->ai_protocol);
         assert(sockfd>0);
+		int reuse = 1;
+    	setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
         assert(bind(sockfd,server_address->ai_addr,server_address->ai_addrlen) == 0);
         free(server_address);
         assert(listen(sockfd,128) == 0);
@@ -46,10 +48,10 @@ void socket_init(UserParam &user_param){
 void exchange_data(UserParam &user_param, char* data, int size){
     LOG_D("size:%d",size);
     if(user_param.nodeId == 0){
-        for(int i=1;i<=user_param.numNodes;i++){
+        for(int i=1;i<user_param.numNodes;i++){
             read(user_param.sockfd[i], data+i*size, size);
         }
-        for(int i=1;i<=user_param.numNodes;i++){
+        for(int i=1;i<user_param.numNodes;i++){
             write(user_param.sockfd[i], data, size*user_param.numNodes);
         }
     }else{

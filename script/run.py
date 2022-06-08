@@ -90,7 +90,9 @@ if __name__ == "__main__":
 		for node in nodes:
 			kill(node,node.cmd)
 		exit(0)
-
+	elif len(sys.argv) == 2 and sys.argv[1] == "sync":
+		sync(nodes,sync_pairs)
+		exit(0)
 	#transfer executable file
 	sync(nodes,sync_pairs)
 

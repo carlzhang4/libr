@@ -135,16 +135,16 @@ void roce_init(UserParam &user_param){
 	user_param.cur_mtu = port_attr.active_mtu;
 }
 
-void create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info, QpHandler &qp_handler){
+QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info){
+	QpHandler *qp_handler;
+	ALLOCATE(qp_handler, QpHandler, 1);
 	int max_out_reads = 1;
 	int tx_depth = 128;
 	int rx_depth = 512;
-	int max_inline_size = 1024;
-	int max_send_sge = 16;
-	int max_recv_sge = 16;
+	int max_inline_size = 0;
 
-	int num_wr = 1;
-	int num_sge = num_wr * 1;
+	int num_wrs = 1;
+	int num_sges = num_wrs * 1;
 	struct ibv_sge* send_sge_list;
 	struct ibv_sge* recv_sge_list;
 	struct ibv_send_wr* send_wr;
@@ -160,10 +160,10 @@ void create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPong
 	int flags = IBV_ACCESS_LOCAL_WRITE;//sufficient for send/recv 
 
 
-	ALLOCATE(send_sge_list, struct ibv_sge, num_sge);
-	ALLOCATE(recv_sge_list, struct ibv_sge, num_sge);
-	ALLOCATE(send_wr, struct ibv_send_wr, num_wr);
-	ALLOCATE(recv_wr, struct ibv_recv_wr, num_wr);
+	ALLOCATE(send_sge_list, struct ibv_sge, num_sges);
+	ALLOCATE(recv_sge_list, struct ibv_sge, num_sges);
+	ALLOCATE(send_wr, struct ibv_send_wr, num_wrs);
+	ALLOCATE(recv_wr, struct ibv_recv_wr, num_wrs);
 
 	//check valid mem
 	assert(size > user_param.page_size);
@@ -182,9 +182,9 @@ void create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPong
 	attr.recv_cq = recv_cq;
 	attr.cap.max_inline_data = max_inline_size;
 	attr.cap.max_send_wr = tx_depth;
-	attr.cap.max_send_sge = max_send_sge;
+	attr.cap.max_send_sge = num_sges;
 	attr.cap.max_recv_wr = rx_depth;
-	attr.cap.max_recv_sge = max_recv_sge;
+	attr.cap.max_recv_sge = num_sges;
 	attr.qp_type = IBV_QPT_RC;
 	qp = ibv_create_qp(pd, &attr);
 	if(qp == NULL && errno == ENOMEM){
@@ -219,8 +219,48 @@ void create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPong
 	info->vaddr = (uintptr_t)buf;
 	memcpy(info->gid.raw, temp_gid.raw, 16);
 
-	qp_handler.qp = qp;
-	qp_handler.pd = pd;
+	qp_handler->buf = (size_t)buf;
+	qp_handler->send_cq = send_cq;
+	qp_handler->recv_cq = recv_cq;
+	qp_handler->max_inline_size = max_inline_size;
+	qp_handler->qp = qp;
+	qp_handler->pd = pd;
+	qp_handler->mr = mr;
+	qp_handler->send_sge_list = send_sge_list;
+	qp_handler->recv_sge_list = recv_sge_list;
+	qp_handler->send_wr = send_wr;
+	qp_handler->recv_wr = recv_wr;
+	qp_handler->num_sges = num_sges;
+	qp_handler->num_wrs = num_wrs;
+
+	return qp_handler;
+}
+
+void init_wr_base_send_recv(QpHandler &qp_handler){
+	//send
+	memset(qp_handler.send_wr,0,sizeof(struct ibv_send_wr)*qp_handler.num_wrs);
+	ibv_send_wr* send_wr = qp_handler.send_wr;
+	ibv_sge* send_sge_list = qp_handler.send_sge_list;
+
+	send_sge_list[0].lkey = qp_handler.mr->lkey;
+	send_wr[0].sg_list = send_sge_list;
+	send_wr[0].num_sge = 1;
+	send_wr[0].wr_id = 1000;//todo
+	send_wr[0].next = NULL;
+	send_wr[0].send_flags = IBV_SEND_SIGNALED;
+	send_wr[0].opcode = IBV_WR_SEND;
+
+	//recv
+	memset(qp_handler.recv_wr,0,sizeof(struct ibv_recv_wr)*qp_handler.num_wrs);
+	ibv_recv_wr* recv_wr = qp_handler.recv_wr;
+	ibv_sge* recv_sge_list = qp_handler.recv_sge_list;
+	
+	recv_sge_list->lkey = qp_handler.mr->lkey;
+	recv_wr[0].sg_list = recv_sge_list;
+	recv_wr[0].num_sge = 1;
+	recv_wr[0].wr_id = 1001;//todo
+	recv_wr[0].next = NULL;//todo
+
 }
 
 void connect_qp_rc(UserParam &user_param, QpHandler &qp_handler, struct PingPongInfo *info, struct PingPongInfo *my_info){
@@ -271,5 +311,49 @@ void connect_qp_rc(UserParam &user_param, QpHandler &qp_handler, struct PingPong
 	}
 	ah = ibv_create_ah(qp_handler.pd,&(attr.ah_attr));
 
+	init_wr_base_send_recv(qp_handler);
+}
 
+#define INFO_FMT " address: LID %#04x QPN %#06x PSN %#06x"
+
+void print_pingpong_info(struct PingPongInfo *info){
+	uint16_t dlid = info->lid;
+	printf(INFO_FMT, dlid, info->qpn, info->psn);
+	printf(RDMA_FMT,info->rkey,info->vaddr);
+	printf(PERF_GID_FMT,"GID",
+				info->gid.raw[0], info->gid.raw[1],
+				info->gid.raw[2], info->gid.raw[3],
+				info->gid.raw[4], info->gid.raw[5],
+				info->gid.raw[6], info->gid.raw[7],
+				info->gid.raw[8], info->gid.raw[9],
+				info->gid.raw[10],info->gid.raw[11],
+				info->gid.raw[12],info->gid.raw[13],
+				info->gid.raw[14],info->gid.raw[15]);
+}
+
+void post_send(QpHandler& qp_handler, size_t offset, int length){
+	qp_handler.send_sge_list[0].addr = qp_handler.buf+offset;
+	qp_handler.send_sge_list[0].length = length;
+	if(length <= qp_handler.max_inline_size){
+		qp_handler.send_wr[0].send_flags |= IBV_SEND_INLINE;
+	}
+	assert(ibv_post_send(qp_handler.qp, &qp_handler.send_wr[0], NULL) == 0);
+	// qp_handler.send_wr[0].send_flags = IBV_SEND_SIGNALED;
+	// qp_handler.send_wr[0].wr_id = 0;
+}
+
+void post_recv(QpHandler& qp_handler, size_t offset, int length){
+	qp_handler.recv_sge_list[0].addr = qp_handler.buf+offset;
+	qp_handler.recv_sge_list[0].length = length;
+	assert(ibv_post_recv(qp_handler.qp, &qp_handler.recv_wr[0], NULL) == 0);
+}
+
+int poll_send_cq(QpHandler& qp_handler,struct ibv_wc *wc){
+	int ne = ibv_poll_cq(qp_handler.send_cq,CTX_POLL_BATCH,wc);//if error, ne < 0
+	return ne;
+}
+
+int poll_recv_cq(QpHandler& qp_handler,struct ibv_wc *wc){
+	int ne = ibv_poll_cq(qp_handler.recv_cq,CTX_POLL_BATCH,wc);
+	return ne;
 }

@@ -131,6 +131,18 @@ void ctx_wait_event(struct ibv_comp_channel *channel);
 
 void roce_init(UserParam &user_param);
 
-void create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info, QpHandler &qp_handler);
+QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info);
+
+void connect_qp_rc(UserParam &user_param, QpHandler &qp_handler, struct PingPongInfo *info, struct PingPongInfo *my_info);
+
+void print_pingpong_info(struct PingPongInfo *info);
+
+void post_send(QpHandler& qp_handler, size_t offset, int length);
+
+void post_recv(QpHandler& qp_handler, size_t offset, int length);
+
+int poll_send_cq(QpHandler& qp_handler,struct ibv_wc *wc);
+
+int poll_recv_cq(QpHandler& qp_handler,struct ibv_wc *wc);
 
 #endif
