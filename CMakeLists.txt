@@ -4,7 +4,7 @@ set(CMAKE_C_COMPILER "gcc-11")
 set(CMAKE_CXX_COMPILER "g++-11")
 project(libr)
 
-add_compile_options(-g -fcoroutines -std=c++20 -static)
+add_compile_options(-g -o3 -fcoroutines -std=c++20 -static)
 
 aux_source_directory(src SRCS)
 

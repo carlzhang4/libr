@@ -52,6 +52,10 @@ class QpHandler{
 		int max_inline_size;
 		int num_wrs;
 		int num_sges;
+		int tx_depth;
+		int rx_depth;
+		int cur_tx_outstanding;
+		int cur_rx_outstanding;
 };
 
 #define ALLOCATE(var,type,size)                                     \
@@ -64,18 +68,24 @@ class QpHandler{
 #define __FILENAME__ (strrchr(__FILE__, '/') + 1)
 
 #ifdef DEBUG
-#define LOG_D(format, ...) printf("[%s][%s][%d]: "#format "\n", __FILENAME__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define LOG_D(format, ...) \
+{char buf[60];\
+snprintf(buf,60,"[DEBUG][%s:%d][%s]", __FILENAME__,  __LINE__, __FUNCTION__ );\
+printf("%-60s" format "\n",buf, ##__VA_ARGS__);}
 #else
 #define LOG_D(format, ...)
 #endif
 
 #ifdef INFO
-#define LOG_I(format, ...) printf(#format "\n", ##__VA_ARGS__)
+#define LOG_I(format, ...)  \
+{char buf[60];\
+snprintf(buf,60,"[INFO][%s:%d][%s]", __FILENAME__,  __LINE__, __FUNCTION__ );\
+printf("%-60s" format "\n",buf, ##__VA_ARGS__);}
 #else
 #define LOG_I(format, ...)
 #endif
 
-#define LOG_E(format, ...) fprintf(stderr, "[ERROR][%s][%s][%d]: "#format "\n", __FILENAME__, __FUNCTION__, __LINE__, ##__VA_ARGS__);\
+#define LOG_E(format, ...) fprintf(stderr, "[ERROR][%s:%d][%s]: "#format "\n", __FILENAME__, __LINE__, __FUNCTION__, ##__VA_ARGS__);\
 exit(1);
 
 #endif
