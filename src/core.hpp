@@ -129,6 +129,8 @@ int get_cache_line_size();
 
 void ctx_wait_event(struct ibv_comp_channel *channel);
 
+void get_opt(UserParam &user_param,int argc, char* argv[]);
+
 void roce_init(UserParam &user_param);
 
 QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info);

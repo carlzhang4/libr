@@ -30,39 +30,6 @@ auto symmetricTransferCoroutine(int nodeId, int coroutineId) -> nano_coroutine::
 
 using namespace std;
 
-void get_opt(UserParam &user_param,int argc, char* argv[]){
-	int opt;
-	const char *optstring = "n:i:s:";
-	while((opt = getopt(argc,argv,optstring)) != -1){
-		switch (opt){
-		case 'n':
-			user_param.numNodes = stoi(optarg);
-			break;
-		case 'i':
-			user_param.nodeId = stoi(optarg);
-			break;
-		case 's':
-			user_param.serverIp = string(optarg);
-			break;
-		default:
-			LOG_E("Unknow parameter");
-		}
-	}
-    if(user_param.nodeId == 0){
-        user_param.sockfd = new int[user_param.numNodes];//zero is left unused
-    }else{
-        user_param.sockfd = new int;
-    }
-
-    user_param.ib_port = 1;//minimum 1
-    user_param.gid_index = 2;//minimum 1
-    user_param.page_size = sysconf(_SC_PAGESIZE);
-    user_param.cacheline_size = get_cache_line_size();
-
-    LOG_I("nodeId:%d numNodes:%d",user_param.nodeId,user_param.numNodes);
-}
-
-
 int main(int argc, char *argv[]) {
 	UserParam user_param;
 	get_opt(user_param, argc, argv);
@@ -98,23 +65,39 @@ int main(int argc, char *argv[]) {
 		ALLOCATE(wc ,struct ibv_wc ,CTX_POLL_BATCH);
 
 		if(user_param.nodeId==0){
-			post_send(*handler,0,256);
+			post_send(*handler,0,64);
+			post_send(*handler,0,64);
+			post_send(*handler,0,64);
+			post_send(*handler,0,64);
+			int count = 4;
 			do{
 				ne = poll_send_cq(*handler,wc);
-			}while(ne==0);
-			for(int i=0;i<ne;i++){
-				cout<<wc[i].status<<endl;
-				assert(wc[i].status == IBV_WC_SUCCESS);
-				cout<<"WC_ID:"<<(int)wc[i].wr_id<<endl;
-			}
+				for(int i=0;i<ne;i++){
+					LOG_D("WC_Status:%d",(int)wc[i].status);
+					assert(wc[i].status == IBV_WC_SUCCESS);
+					LOG_D("WC_ID:%d",(int)wc[i].wr_id);
+				}
+				count-=ne;
+			}while(count>0);
 		}else{
-			post_recv(*handler,0,256);
+			post_recv(*handler,0,64);
+			post_recv(*handler,64,64);
+			post_recv(*handler,128,64);
+			post_recv(*handler,192,64);
+			int count = 4;
 			do{
 				ne = poll_recv_cq(*handler,wc);
-			}while(ne==0);
-			for(int i=0;i<ne;i++){
-				assert(wc[i].status == IBV_WC_SUCCESS);
-				cout<<"WC_ID:"<<(int)wc[i].wr_id<<endl;
+				for(int i=0;i<ne;i++){
+					assert(wc[i].status == IBV_WC_SUCCESS);
+					LOG_D("WC_ID:%d",(int)wc[i].wr_id);
+				}
+				count-=ne;
+			}while(count>0);
+		}
+		for(int i=0;i<512/sizeof(int);i++){
+			cout<<((int*)buf)[i]<<" ";
+			if((i+1)%16==0){
+				cout<<endl;
 			}
 		}
 	}

@@ -113,6 +113,38 @@ void ctx_wait_event(struct ibv_comp_channel *channel){
 	assert(ibv_req_notify_cq(ev_cq, 0) == 0);
 }
 
+void get_opt(UserParam &user_param,int argc, char* argv[]){
+	int opt;
+	const char *optstring = "n:i:s:";
+	while((opt = getopt(argc,argv,optstring)) != -1){
+		switch (opt){
+		case 'n':
+			user_param.numNodes = stoi(optarg);
+			break;
+		case 'i':
+			user_param.nodeId = stoi(optarg);
+			break;
+		case 's':
+			user_param.serverIp = string(optarg);
+			break;
+		default:
+			LOG_E("Unknow parameter");
+		}
+	}
+    if(user_param.nodeId == 0){
+        user_param.sockfd = new int[user_param.numNodes];//zero is left unused
+    }else{
+        user_param.sockfd = new int;
+    }
+
+    user_param.ib_port = 1;//minimum 1
+    user_param.gid_index = 2;//minimum 1
+    user_param.page_size = sysconf(_SC_PAGESIZE);
+    user_param.cacheline_size = get_cache_line_size();
+
+    LOG_I("nodeId:%d numNodes:%d",user_param.nodeId,user_param.numNodes);
+}
+
 void roce_init(UserParam &user_param){
 	struct ibv_device* ib_dev = ctx_find_dev("mlx5_0");
 	struct ibv_context* context = ctx_open_device(ib_dev);

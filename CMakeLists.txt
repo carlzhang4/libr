@@ -12,5 +12,8 @@ add_executable(write ${SRCS} write.cpp)
 
 add_executable(demo ${SRCS} demo.cpp)
 
+add_executable(libr_test ${SRCS} libr_test.cpp)
+
 target_link_libraries(write ibverbs)
 target_link_libraries(demo ibverbs pthread)
+target_link_libraries(libr_test ibverbs)
