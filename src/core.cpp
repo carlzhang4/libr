@@ -358,13 +358,13 @@ void connect_qp_rc(UserParam &user_param, QpHandler &qp_handler, struct PingPong
 	init_wr_base_send_recv(qp_handler);
 }
 
-#define INFO_FMT " address: LID %#04x QPN %#06x PSN %#08x"
+#define INFO_FMT "LID %#04x QPN %#06x PSN %#08x RKey %#08x VAddr %#016llx  %s: %02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d"
 
 void print_pingpong_info(struct PingPongInfo *info){
 	uint16_t dlid = info->lid;
-	printf(INFO_FMT, dlid, info->qpn, info->psn);
-	printf(RDMA_FMT,info->rkey,info->vaddr);
-	printf(PERF_GID_FMT,"GID",
+	LOG_I(INFO_FMT, dlid, info->qpn, info->psn,
+				info->rkey,info->vaddr,
+				"GID",
 				info->gid.raw[0], info->gid.raw[1],
 				info->gid.raw[2], info->gid.raw[3],
 				info->gid.raw[4], info->gid.raw[5],
