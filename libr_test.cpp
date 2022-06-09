@@ -3,9 +3,7 @@
 #include <cstdio>
 #include <stdio.h>
 #include <time.h>
-#include "src/core.hpp"
-#include "src/util.hpp"
-#include "src/connection_manager.hpp"
+#include "src/libr.hpp"
 
 using namespace std;
 

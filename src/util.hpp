@@ -54,8 +54,6 @@ class QpHandler{
 		int num_sges;
 		int tx_depth;
 		int rx_depth;
-		int cur_tx_outstanding;
-		int cur_rx_outstanding;
 };
 
 #define ALLOCATE(var,type,size)                                     \

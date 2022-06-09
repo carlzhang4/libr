@@ -1,4 +1,4 @@
-#include "core.hpp"
+#include "libr.hpp"
 
 
 struct ibv_device* ctx_find_dev(char const * ib_devname){
@@ -30,26 +30,7 @@ struct ibv_context* ctx_open_device(struct ibv_device *ib_dev){
 	return context;
 }
 
-void check_link(struct ibv_context *context,struct perftest_parameters *user_param){
-	printf("Transport Type  : %s\n",str_transport_type(context->device->transport_type));
-	struct ibv_port_attr port_attr;
-	assert(ibv_query_port(context, user_param->ib_port, &port_attr) == 0);
-	printf("Link Layer      : %s\n",link_layer_str(port_attr.link_layer));
-	assert(strcmp("Unknown", link_layer_str(port_attr.link_layer)) != 0);
-
-	assert(port_attr.state == IBV_PORT_ACTIVE);
-
-	if(port_attr.link_layer == IBV_LINK_LAYER_ETHERNET && user_param->gid_index == -1){
-		user_param->gid_index = 0;
-	}
-
-	struct ibv_device_attr attr;
-	assert(ibv_query_device(context,&attr) == 0);
-	printf("Max Outreads    : %d, current 1\n",attr.max_qp_rd_atom);
-	printf("Max Pkeys       : %d, current 0\n",attr.max_pkeys);
-}
-
-const char* str_transport_type(enum ibv_transport_type t){
+const char* transport_type_str(enum ibv_transport_type t){
 	switch (t){
 		case IBV_TRANSPORT_UNKNOWN : return "IBV_TRANSPORT_UNKNOWN";
 		case IBV_TRANSPORT_IB : return "IBV_TRANSPORT_IB";
@@ -74,16 +55,6 @@ const char *link_layer_str(int8_t link_layer){
 	}
 }
 
-const char *verb_str(VerbType verb){
-	switch (verb) {
-		case WRITE: 	return "WRITE";
-		case READ:  	return "READ";
-		case SEND:  	return "SEND";
-		case ATOMIC:  	return "ATOMIC";
-		default:   		return "Unknown";
-	}
-}
-
 int get_cache_line_size(){
 	int size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
 	if (size == 0) {
@@ -103,14 +74,6 @@ int get_cache_line_size(){
 		size = 64;
 
 	return size;
-}
-
-void ctx_wait_event(struct ibv_comp_channel *channel){
-	struct ibv_cq       *ev_cq;
-	void                *ev_ctx;
-	assert(ibv_get_cq_event(channel,&ev_cq,&ev_ctx) == 0);
-	ibv_ack_cq_events(ev_cq,1);
-	assert(ibv_req_notify_cq(ev_cq, 0) == 0);
 }
 
 void get_opt(UserParam &user_param,int argc, char* argv[]){
@@ -151,7 +114,7 @@ void roce_init(UserParam &user_param){
 	user_param.context = context;
 
 	//check link
-	LOG_I("%-20s : %s","Transport type",str_transport_type(context->device->transport_type));
+	LOG_I("%-20s : %s","Transport type",transport_type_str(context->device->transport_type));
 	struct ibv_port_attr port_attr;
 	assert(ibv_query_port(context, user_param.ib_port, &port_attr) == 0);
 	LOG_I("%-20s : %s","Line Layer",link_layer_str(port_attr.link_layer));
@@ -270,9 +233,6 @@ QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct Pi
 	qp_handler->num_wrs = num_wrs;
 	qp_handler->tx_depth = tx_depth;
 	qp_handler->rx_depth = rx_depth;
-	qp_handler->cur_tx_outstanding = 0;
-	qp_handler->cur_rx_outstanding = 0;
-
 
 	return qp_handler;
 }
@@ -357,8 +317,6 @@ void connect_qp_rc(UserParam &user_param, QpHandler &qp_handler, struct PingPong
 
 	init_wr_base_send_recv(qp_handler);
 }
-
-#define INFO_FMT "LID %#04x QPN %#06x PSN %#08x RKey %#08x VAddr %#016llx  %s: %02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d"
 
 void print_pingpong_info(struct PingPongInfo *info){
 	uint16_t dlid = info->lid;
