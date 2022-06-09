@@ -8,6 +8,10 @@
 
 using namespace std;
 
+/*
+@rc_send_recv_test
+node 0 send 4 times 64 bytes data to node 1's four different places
+*/
 void rc_send_recv_test(UserParam &user_param){ 
 	PingPongInfo *info = new PingPongInfo[user_param.numNodes]();
 
