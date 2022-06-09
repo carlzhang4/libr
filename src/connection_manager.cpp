@@ -46,7 +46,7 @@ void socket_init(UserParam &user_param){
     }
 }
 void exchange_data(UserParam &user_param, char* data, int size){
-    LOG_D("size:%d",size);
+    LOG_D("exchange data size:%d",size);
     if(user_param.nodeId == 0){
         for(int i=1;i<user_param.numNodes;i++){
             read(user_param.sockfd[i], data+i*size, size);

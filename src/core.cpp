@@ -19,7 +19,7 @@ struct ibv_device* ctx_find_dev(char const * ib_devname){
 				break;
 		assert(ib_dev != NULL);
 	}
-	printf("IB_DEV_NAME     : %s\n",ibv_get_device_name(ib_dev));
+	LOG_I("%-20s : %s","IB_DEV_NAME",ibv_get_device_name(ib_dev));
 	return ib_dev;
 }
 
@@ -138,7 +138,7 @@ void get_opt(UserParam &user_param,int argc, char* argv[]){
     }
 
     user_param.ib_port = 1;//minimum 1
-    user_param.gid_index = 2;//minimum 1
+    user_param.gid_index = 3;//minimum 1, 2 is v1
     user_param.page_size = sysconf(_SC_PAGESIZE);
     user_param.cacheline_size = get_cache_line_size();
 
@@ -151,20 +151,23 @@ void roce_init(UserParam &user_param){
 	user_param.context = context;
 
 	//check link
-	LOG_I("Transport type : %s",str_transport_type(context->device->transport_type));
+	LOG_I("%-20s : %s","Transport type",str_transport_type(context->device->transport_type));
 	struct ibv_port_attr port_attr;
 	assert(ibv_query_port(context, user_param.ib_port, &port_attr) == 0);
-	LOG_I("Line Layer : %s",link_layer_str(port_attr.link_layer));
+	LOG_I("%-20s : %s","Line Layer",link_layer_str(port_attr.link_layer));
 	assert(port_attr.state == IBV_PORT_ACTIVE);
 	struct ibv_device_attr attr;
 	assert(ibv_query_device(context,&attr) == 0);
-	LOG_I("Max Outreads : %d",attr.max_qp_rd_atom);
-	LOG_I("Max Pkeys : %d",attr.max_pkeys);
-	LOG_I(Atomic Capacity : %d,attr.atomic_cap);
+	LOG_I("%-20s : %d","Max Outreads",attr.max_qp_rd_atom);
+	LOG_I("%-20s : %d","Max Pkeys",attr.max_pkeys);
+	LOG_I("%-20s : %d","Atomic Capacity",attr.atomic_cap);
 
 	//set mtu
 	assert((port_attr.active_mtu >= IBV_MTU_256 && port_attr.active_mtu <= IBV_MTU_4096));
 	user_param.cur_mtu = port_attr.active_mtu;
+	LOG_I("%-20s : %d","CUR MTU",128<<(user_param.cur_mtu));
+
+	srand48(getpid() * time(NULL));
 }
 
 QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info){
@@ -239,7 +242,6 @@ QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct Pi
 	//setup connection
 	union ibv_gid temp_gid;
 	struct ibv_port_attr attr_port;
-	srand48(getpid() * time(NULL));
 	assert(ibv_query_port(user_param.context, user_param.ib_port, &attr_port) == 0);
 	assert(ibv_query_gid(user_param.context, user_param.ib_port, user_param.gid_index, &temp_gid)==0);
 	info->lid = attr_port.lid;//local id, it seems only useful for ib instead of roce
@@ -250,6 +252,8 @@ QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct Pi
 	info->out_reads = max_out_reads;
 	info->vaddr = (uintptr_t)buf;
 	memcpy(info->gid.raw, temp_gid.raw, 16);
+
+	LOG_D("create PSN %#x",info->psn);
 
 	qp_handler->buf = (size_t)buf;
 	qp_handler->send_cq = send_cq;
@@ -264,6 +268,11 @@ QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct Pi
 	qp_handler->recv_wr = recv_wr;
 	qp_handler->num_sges = num_sges;
 	qp_handler->num_wrs = num_wrs;
+	qp_handler->tx_depth = tx_depth;
+	qp_handler->rx_depth = rx_depth;
+	qp_handler->cur_tx_outstanding = 0;
+	qp_handler->cur_rx_outstanding = 0;
+
 
 	return qp_handler;
 }
@@ -274,6 +283,7 @@ void init_wr_base_send_recv(QpHandler &qp_handler){
 	ibv_send_wr* send_wr = qp_handler.send_wr;
 	ibv_sge* send_sge_list = qp_handler.send_sge_list;
 
+	send_sge_list[0].addr = qp_handler.buf;
 	send_sge_list[0].lkey = qp_handler.mr->lkey;
 	send_wr[0].sg_list = send_sge_list;
 	send_wr[0].num_sge = 1;
@@ -287,6 +297,7 @@ void init_wr_base_send_recv(QpHandler &qp_handler){
 	ibv_recv_wr* recv_wr = qp_handler.recv_wr;
 	ibv_sge* recv_sge_list = qp_handler.recv_sge_list;
 	
+	recv_sge_list[0].addr = qp_handler.buf;
 	recv_sge_list->lkey = qp_handler.mr->lkey;
 	recv_wr[0].sg_list = recv_sge_list;
 	recv_wr[0].num_sge = 1;
@@ -324,6 +335,7 @@ void connect_qp_rc(UserParam &user_param, QpHandler &qp_handler, struct PingPong
 
 	//modify qp to rtr
 	assert(ibv_modify_qp(qp_handler.qp, &attr, flags) == 0);
+	LOG_D("Connected success, local QPN:%#06x, remote QPN:%#08x",my_info->qpn, info->qpn);
 
 	{
 		//modify qp to rts
@@ -346,13 +358,13 @@ void connect_qp_rc(UserParam &user_param, QpHandler &qp_handler, struct PingPong
 	init_wr_base_send_recv(qp_handler);
 }
 
-#define INFO_FMT " address: LID %#04x QPN %#06x PSN %#06x"
+#define INFO_FMT "LID %#04x QPN %#06x PSN %#08x RKey %#08x VAddr %#016llx  %s: %02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d"
 
 void print_pingpong_info(struct PingPongInfo *info){
 	uint16_t dlid = info->lid;
-	printf(INFO_FMT, dlid, info->qpn, info->psn);
-	printf(RDMA_FMT,info->rkey,info->vaddr);
-	printf(PERF_GID_FMT,"GID",
+	LOG_I(INFO_FMT, dlid, info->qpn, info->psn,
+				info->rkey,info->vaddr,
+				"GID",
 				info->gid.raw[0], info->gid.raw[1],
 				info->gid.raw[2], info->gid.raw[3],
 				info->gid.raw[4], info->gid.raw[5],
