@@ -351,12 +351,13 @@ void rc_send_recv_test(UserParam &user_param, int num_qps){
 }
 
 int main(int argc, char *argv[]){
+	int num_threads = 48;
 	UserParam user_param;
 	get_opt(user_param, argc, argv);
     socket_init(user_param);
-    roce_init(user_param);
+    roce_init(user_param,num_threads);
     // rc_send_recv_test(user_param,4);
 	// rc_send_recv_benchmark_single_qp(user_param,0,2048);
-	rc_send_recv_benchmark_multi_qps(user_param,0,64*1024*1024,64,12);
+	rc_send_recv_benchmark_multi_qps(user_param,0,16*1024*1024,64,num_threads);
 	return 0;
 }

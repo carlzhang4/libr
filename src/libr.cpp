@@ -108,11 +108,15 @@ void get_opt(UserParam &user_param,int argc, char* argv[]){
     LOG_I("nodeId:%d numNodes:%d",user_param.nodeId,user_param.numNodes);
 }
 
-void roce_init(UserParam &user_param){
+void roce_init(UserParam &user_param, int num_contexts){
+	user_param.num_contexts = num_contexts;
+	ALLOCATE(user_param.contexts,struct ibv_context*,num_contexts);
 	struct ibv_device* ib_dev = ctx_find_dev("mlx5_0");
-	struct ibv_context* context = ctx_open_device(ib_dev);
-	user_param.context = context;
-
+	for(int i=0;i<num_contexts;i++){
+		user_param.contexts[i] = ctx_open_device(ib_dev);
+	}
+	struct ibv_context* context = user_param.contexts[0];
+	
 	//check link
 	LOG_I("%-20s : %s","Transport type",transport_type_str(context->device->transport_type));
 	struct ibv_port_attr port_attr;
@@ -134,6 +138,8 @@ void roce_init(UserParam &user_param){
 }
 
 QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info){
+	static int context_index = 0;
+	assert(context_index<user_param.num_contexts);
 	QpHandler *qp_handler;
 	ALLOCATE(qp_handler, QpHandler, 1);
 	int max_out_reads = 1;
@@ -168,10 +174,10 @@ QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct Pi
 	assert(((size_t)buf)%user_param.page_size == 0);
 	
 	//create pd/mr/scq/rcq
-	assert(pd = ibv_alloc_pd(user_param.context));
+	assert(pd = ibv_alloc_pd(user_param.contexts[context_index]));
 	assert(mr = ibv_reg_mr(pd, buf, size, flags));
-	assert(send_cq = ibv_create_cq(user_param.context, tx_depth, NULL, channel, 0));
-	assert(recv_cq = ibv_create_cq(user_param.context, rx_depth, NULL,channel, 0));
+	assert(send_cq = ibv_create_cq(user_param.contexts[context_index], tx_depth, NULL, channel, 0));
+	assert(recv_cq = ibv_create_cq(user_param.contexts[context_index], rx_depth, NULL,channel, 0));
 	
 	//create qp
 	struct ibv_qp_init_attr attr;
@@ -205,8 +211,8 @@ QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct Pi
 	//setup connection
 	union ibv_gid temp_gid;
 	struct ibv_port_attr attr_port;
-	assert(ibv_query_port(user_param.context, user_param.ib_port, &attr_port) == 0);
-	assert(ibv_query_gid(user_param.context, user_param.ib_port, user_param.gid_index, &temp_gid)==0);
+	assert(ibv_query_port(user_param.contexts[context_index], user_param.ib_port, &attr_port) == 0);
+	assert(ibv_query_gid(user_param.contexts[context_index], user_param.ib_port, user_param.gid_index, &temp_gid)==0);
 	info->lid = attr_port.lid;//local id, it seems only useful for ib instead of roce
 	info->gid_index = user_param.gid_index;
 	info->qpn = qp->qp_num;
@@ -233,6 +239,8 @@ QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct Pi
 	qp_handler->num_wrs = num_wrs;
 	qp_handler->tx_depth = tx_depth;
 	qp_handler->rx_depth = rx_depth;
+
+	context_index++;
 
 	return qp_handler;
 }

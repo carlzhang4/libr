@@ -24,7 +24,8 @@ class UserParam{
 		enum ibv_mtu				cur_mtu;
 		int							page_size;
 		int							cacheline_size;
-		struct ibv_context			*context;
+		struct ibv_context			**contexts;
+		int							num_contexts;
 };
 
 struct PingPongInfo{
