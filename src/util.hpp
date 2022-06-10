@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string>
 #include <infiniband/verbs.h>
+#include <sys/mman.h>
 
 using namespace std;
 
@@ -86,4 +87,5 @@ printf("%-60s" format "\n",buf, ##__VA_ARGS__);}
 #define LOG_E(format, ...) fprintf(stderr, "[ERROR][%s:%d][%s]: "#format "\n", __FILENAME__, __LINE__, __FUNCTION__, ##__VA_ARGS__);\
 exit(1);
 
+void *myMalloc2MbPage(size_t size);
 #endif
