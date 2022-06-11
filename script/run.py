@@ -1,3 +1,4 @@
+#!/usr/bin/python3.7
 import paramiko
 import sys
 import time
@@ -92,6 +93,9 @@ if __name__ == "__main__":
 		exit(0)
 	elif len(sys.argv) == 2 and sys.argv[1] == "sync":
 		sync(nodes,sync_pairs)
+		exit(0)
+	elif len(sys.argv) == 2:
+		print("Unknow command")
 		exit(0)
 	#transfer executable file
 	sync(nodes,sync_pairs)

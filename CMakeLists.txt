@@ -12,5 +12,27 @@ add_executable(demo ${SRCS} demo.cpp)
 
 add_executable(libr_test ${SRCS} libr_test.cpp)
 
+set(HEAD_FILES
+	src/libr.hpp
+)
+
 target_link_libraries(demo ibverbs pthread)
 target_link_libraries(libr_test ibverbs pthread)
+
+add_library(r SHARED ${SRCS})
+target_link_libraries(r ibverbs pthread)
+
+install(
+	TARGETS r
+	DESTINATION /usr/lib64
+)
+
+install(
+	FILES ${HEAD_FILES}
+	DESTINATION /usr/include
+)
+
+install(
+	PROGRAMS script/run.py
+	DESTINATION /usr/local/bin
+)
