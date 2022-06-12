@@ -34,13 +34,13 @@ const char *link_layer_str(int8_t link_layer);
 
 int get_cache_line_size();
 
-void get_opt(UserParam &user_param,int argc, char* argv[]);
+void get_opt(NetParam &net_param,int argc, char* argv[]);
 
-void roce_init(UserParam &user_param, int num_contexts = 1);
+void roce_init(NetParam &net_param, int num_contexts = 1);
 
-QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info);
+QpHandler* create_qp_rc(NetParam& net_param, void* buf, size_t size, struct PingPongInfo *info);
 
-void connect_qp_rc(UserParam &user_param, QpHandler &qp_handler, struct PingPongInfo *info, struct PingPongInfo *my_info);
+void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongInfo *info, struct PingPongInfo *my_info);
 
 void print_pingpong_info(struct PingPongInfo *info);
 

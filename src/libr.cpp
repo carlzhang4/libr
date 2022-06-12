@@ -76,51 +76,56 @@ int get_cache_line_size(){
 	return size;
 }
 
-void get_opt(UserParam &user_param,int argc, char* argv[]){
+void get_opt(NetParam &net_param,int argc, char* argv[]){
 	int opt;
 	const char *optstring = "n:i:s:";
+	int total_set = 0;
 	while((opt = getopt(argc,argv,optstring)) != -1){
 		switch (opt){
 		case 'n':
-			user_param.numNodes = stoi(optarg);
+			net_param.numNodes = stoi(optarg);
+			total_set++;
 			break;
 		case 'i':
-			user_param.nodeId = stoi(optarg);
+			net_param.nodeId = stoi(optarg);
+			total_set++;
 			break;
 		case 's':
-			user_param.serverIp = string(optarg);
+			net_param.serverIp = string(optarg);
+			total_set++;
 			break;
 		default:
 			LOG_E("Unknow parameter");
 		}
 	}
-    if(user_param.nodeId == 0){
-        user_param.sockfd = new int[user_param.numNodes];//zero is left unused
+	assert(total_set == 3);
+    if(net_param.nodeId == 0){
+        net_param.sockfd = new int[net_param.numNodes];//zero is left unused
     }else{
-        user_param.sockfd = new int;
+        net_param.sockfd = new int;
     }
 
-    user_param.ib_port = 1;//minimum 1
-    user_param.gid_index = 3;//minimum 1, 2 is v1
-    user_param.page_size = sysconf(_SC_PAGESIZE);
-    user_param.cacheline_size = get_cache_line_size();
+    net_param.ib_port = 1;//minimum 1
+    net_param.gid_index = 3;//minimum 1, 2 is v1
+    net_param.page_size = sysconf(_SC_PAGESIZE);
+    net_param.cacheline_size = get_cache_line_size();
 
-    LOG_I("nodeId:%d numNodes:%d",user_param.nodeId,user_param.numNodes);
+    LOG_I("nodeId:%d numNodes:%d",net_param.nodeId,net_param.numNodes);
 }
 
-void roce_init(UserParam &user_param, int num_contexts){
-	user_param.num_contexts = num_contexts;
-	ALLOCATE(user_param.contexts,struct ibv_context*,num_contexts);
+void roce_init(NetParam &net_param, int num_contexts){
+	net_param.num_contexts = num_contexts;
+	ALLOCATE(net_param.contexts,struct ibv_context*,num_contexts);
 	struct ibv_device* ib_dev = ctx_find_dev("mlx5_0");
 	for(int i=0;i<num_contexts;i++){
-		user_param.contexts[i] = ctx_open_device(ib_dev);
+		net_param.contexts[i] = ctx_open_device(ib_dev);
 	}
-	struct ibv_context* context = user_param.contexts[0];
+	struct ibv_context* context = net_param.contexts[0];
 	
 	//check link
 	LOG_I("%-20s : %s","Transport type",transport_type_str(context->device->transport_type));
 	struct ibv_port_attr port_attr;
-	assert(ibv_query_port(context, user_param.ib_port, &port_attr) == 0);
+	assert(ibv_query_port(context, net_param.ib_port, &port_attr) == 0);
 	LOG_I("%-20s : %s","Line Layer",link_layer_str(port_attr.link_layer));
 	assert(port_attr.state == IBV_PORT_ACTIVE);
 	struct ibv_device_attr attr;
@@ -131,15 +136,15 @@ void roce_init(UserParam &user_param, int num_contexts){
 
 	//set mtu
 	assert((port_attr.active_mtu >= IBV_MTU_256 && port_attr.active_mtu <= IBV_MTU_4096));
-	user_param.cur_mtu = port_attr.active_mtu;
-	LOG_I("%-20s : %d","CUR MTU",128<<(user_param.cur_mtu));
+	net_param.cur_mtu = port_attr.active_mtu;
+	LOG_I("%-20s : %d","CUR MTU",128<<(net_param.cur_mtu));
 
 	srand48(getpid() * time(NULL));
 }
 
-QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct PingPongInfo *info){
+QpHandler* create_qp_rc(NetParam& net_param, void* buf, size_t size, struct PingPongInfo *info){
 	static int context_index = 0;
-	assert(context_index<user_param.num_contexts);
+	assert(context_index<net_param.num_contexts);
 	QpHandler *qp_handler;
 	ALLOCATE(qp_handler, QpHandler, 1);
 	int max_out_reads = 1;
@@ -170,14 +175,14 @@ QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct Pi
 	ALLOCATE(recv_wr, struct ibv_recv_wr, num_wrs);
 
 	//check valid mem
-	assert(size > user_param.page_size);
-	assert(((size_t)buf)%user_param.page_size == 0);
+	assert(size > net_param.page_size);
+	assert(((size_t)buf)%net_param.page_size == 0);
 	
 	//create pd/mr/scq/rcq
-	assert(pd = ibv_alloc_pd(user_param.contexts[context_index]));
+	assert(pd = ibv_alloc_pd(net_param.contexts[context_index]));
 	assert(mr = ibv_reg_mr(pd, buf, size, flags));
-	assert(send_cq = ibv_create_cq(user_param.contexts[context_index], tx_depth, NULL, channel, 0));
-	assert(recv_cq = ibv_create_cq(user_param.contexts[context_index], rx_depth, NULL,channel, 0));
+	assert(send_cq = ibv_create_cq(net_param.contexts[context_index], tx_depth, NULL, channel, 0));
+	assert(recv_cq = ibv_create_cq(net_param.contexts[context_index], rx_depth, NULL,channel, 0));
 	
 	//create qp
 	struct ibv_qp_init_attr attr;
@@ -204,17 +209,17 @@ QpHandler* create_qp_rc(UserParam& user_param, void* buf, size_t size, struct Pi
 	flags |= IBV_QP_ACCESS_FLAGS;
 	attr_qp.qp_state		= IBV_QPS_INIT;
 	attr_qp.pkey_index		= 0;
-	attr_qp.port_num 		= user_param.ib_port;
+	attr_qp.port_num 		= net_param.ib_port;
 	attr_qp.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE;//for send
 	assert(ibv_modify_qp(qp, &attr_qp, flags) == 0);
 
 	//setup connection
 	union ibv_gid temp_gid;
 	struct ibv_port_attr attr_port;
-	assert(ibv_query_port(user_param.contexts[context_index], user_param.ib_port, &attr_port) == 0);
-	assert(ibv_query_gid(user_param.contexts[context_index], user_param.ib_port, user_param.gid_index, &temp_gid)==0);
+	assert(ibv_query_port(net_param.contexts[context_index], net_param.ib_port, &attr_port) == 0);
+	assert(ibv_query_gid(net_param.contexts[context_index], net_param.ib_port, net_param.gid_index, &temp_gid)==0);
 	info->lid = attr_port.lid;//local id, it seems only useful for ib instead of roce
-	info->gid_index = user_param.gid_index;
+	info->gid_index = net_param.gid_index;
 	info->qpn = qp->qp_num;
 	info->psn = lrand48() & 0xffffff;
 	info->rkey = mr->rkey;
@@ -274,24 +279,24 @@ void init_wr_base_send_recv(QpHandler &qp_handler){
 
 }
 
-void connect_qp_rc(UserParam &user_param, QpHandler &qp_handler, struct PingPongInfo *info, struct PingPongInfo *my_info){
+void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongInfo *info, struct PingPongInfo *my_info){
 	struct ibv_ah* ah;//todo
 	struct ibv_qp_attr attr;
 	memset(&attr, 0, sizeof attr);
 	int flags = IBV_QP_STATE;
 	attr.qp_state = IBV_QPS_RTR;
 	attr.ah_attr.src_path_bits = 0;
-	attr.ah_attr.port_num = user_param.ib_port;
+	attr.ah_attr.port_num = net_param.ib_port;
 	attr.ah_attr.dlid = info->lid;
 	attr.ah_attr.sl = 0;//service level default 0
 	attr.ah_attr.is_global = 1;
 	attr.ah_attr.grh.dgid = info->gid;
-	attr.ah_attr.grh.sgid_index = user_param.gid_index;
+	attr.ah_attr.grh.sgid_index = net_param.gid_index;
 	attr.ah_attr.grh.hop_limit = 0xFF;
 	attr.ah_attr.grh.traffic_class = 0;
 
 	//UD does not need below code
-	attr.path_mtu = user_param.cur_mtu;
+	attr.path_mtu = net_param.cur_mtu;
 	attr.dest_qp_num = info->qpn;
 	attr.rq_psn = info->psn;
 	flags |= (IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN);

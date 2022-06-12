@@ -11,7 +11,7 @@ using namespace std;
 #define SUCCESS 0
 #define FAILURE 1
 
-class UserParam{
+class NetParam{
 	public:
 		int nodeId;
 		string serverIp;

@@ -19,6 +19,6 @@
 
 #define SERVER_PORT             "6666"
 
-void socket_init(UserParam &user_param);
-void exchange_data(UserParam &user_param, char* data, int size);
+void socket_init(NetParam &net_param);
+void exchange_data(NetParam &net_param, char* data, int size);
 #endif

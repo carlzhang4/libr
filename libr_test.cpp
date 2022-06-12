@@ -97,19 +97,19 @@ void sub_task(int thread_index, int node_id,int is_same_addr,size_t pack_size, s
 	LOG_I("Time : %.3f s",duration);
 	LOG_I("Speed : %.2f Gb/s",8.0*ops*pack_size/1024/1024/1024/duration);
 }
-void rc_send_recv_benchmark_multi_qps(UserParam &user_param, int is_same_addr,size_t ops, size_t pack_size,int num_threads){
+void rc_send_recv_benchmark_multi_qps(NetParam &net_param, int is_same_addr,size_t ops, size_t pack_size,int num_threads){
 	int num_cpus = thread::hardware_concurrency();
 	LOG_I("%-20s : %d","HardwareConcurrency",num_cpus);
 	assert(num_threads<=num_cpus);
 	size_t buf_size = 128*1024*1024;
-	PingPongInfo *info = new PingPongInfo[user_param.numNodes*num_threads]();
+	PingPongInfo *info = new PingPongInfo[net_param.numNodes*num_threads]();
 	void** bufs = new void*[num_threads];
 	QpHandler** qp_handlers = new QpHandler*[num_threads]();
 	for(int i=0;i<num_threads;i++){
-		// bufs[i] = memalign(user_param.page_size,buf_size);
+		// bufs[i] = memalign(net_param.page_size,buf_size);
 		bufs[i] = myMalloc2MbPage(buf_size);
 		for(int j=0;j<buf_size/sizeof(int);j++){
-			if(user_param.nodeId == 0){
+			if(net_param.nodeId == 0){
 				((int**)bufs)[i][j] = j;
 			}else{
 				((int**)bufs)[i][j] = 0;
@@ -118,23 +118,23 @@ void rc_send_recv_benchmark_multi_qps(UserParam &user_param, int is_same_addr,si
 	}
 
 	for(int i=0;i<num_threads;i++){
-		qp_handlers[i] = create_qp_rc(user_param,bufs[i],buf_size,info+i);
+		qp_handlers[i] = create_qp_rc(net_param,bufs[i],buf_size,info+i);
 	}
-	exchange_data(user_param, (char*)info, sizeof(PingPongInfo)*num_threads);
-	for(int i=0;i<user_param.numNodes*num_threads;i++){
+	exchange_data(net_param, (char*)info, sizeof(PingPongInfo)*num_threads);
+	for(int i=0;i<net_param.numNodes*num_threads;i++){
 		print_pingpong_info(info+i);
 	}
-	int my_id = user_param.nodeId;
-	int dest_id = (user_param.nodeId+1)%user_param.numNodes;
+	int my_id = net_param.nodeId;
+	int dest_id = (net_param.nodeId+1)%net_param.numNodes;
 	for(int i=0;i<num_threads;i++){
-		connect_qp_rc(user_param,*qp_handlers[i],info+dest_id*num_threads+i,info+my_id*num_threads+i);
+		connect_qp_rc(net_param,*qp_handlers[i],info+dest_id*num_threads+i,info+my_id*num_threads+i);
 	}
 
 	vector<thread> threads(num_threads);
 	struct timespec start_timer,end_timer;
 	clock_gettime(CLOCK_MONOTONIC, &start_timer);
 	for(int i=0;i<num_threads;i++){
-		threads[i] = thread(sub_task, i, user_param.nodeId, is_same_addr, pack_size,ops, qp_handlers[i], bufs[i], buf_size);
+		threads[i] = thread(sub_task, i, net_param.nodeId, is_same_addr, pack_size,ops, qp_handlers[i], bufs[i], buf_size);
 		cpu_set_t cpuset;
 		CPU_ZERO(&cpuset);
 		CPU_SET(i, &cpuset);
@@ -151,32 +151,32 @@ void rc_send_recv_benchmark_multi_qps(UserParam &user_param, int is_same_addr,si
 	LOG_I("Total Time : %.3f s",duration);
 	LOG_I("Total Speed : %.2f Gb/s",8.0*num_threads*ops*pack_size/1024/1024/1024/duration);
 }
-void rc_send_recv_benchmark_single_qp(UserParam &user_param, int is_same_addr,int pack_size){
-	assert(user_param.numNodes == 2);
+void rc_send_recv_benchmark_single_qp(NetParam &net_param, int is_same_addr,int pack_size){
+	assert(net_param.numNodes == 2);
 	int ops = 64*1024;
 	size_t buf_size = 1*1024*1024*1024;
 	if(!is_same_addr){
 		assert(ops*pack_size <= buf_size);
 	}
 	
-	PingPongInfo *info = new PingPongInfo[user_param.numNodes]();
+	PingPongInfo *info = new PingPongInfo[net_param.numNodes]();
 	
-	void* buf = memalign(user_param.page_size,buf_size);
-	QpHandler* handler = create_qp_rc(user_param,buf,buf_size,info);
-	exchange_data(user_param, (char*)info, sizeof(PingPongInfo));
-	for(int i=0;i<user_param.numNodes;i++){
+	void* buf = memalign(net_param.page_size,buf_size);
+	QpHandler* handler = create_qp_rc(net_param,buf,buf_size,info);
+	exchange_data(net_param, (char*)info, sizeof(PingPongInfo));
+	for(int i=0;i<net_param.numNodes;i++){
 		print_pingpong_info(info+i);
 	}
 	for(int i=0;i<buf_size/sizeof(int);i++){
-		if(user_param.nodeId == 0){
+		if(net_param.nodeId == 0){
 			((int*)buf)[i] = i;
 		}else{
 			((int*)buf)[i] = 0;
 		}
 	}
-	int my_id = user_param.nodeId;
-	int dest_id = (user_param.nodeId+1)%user_param.numNodes;
-	connect_qp_rc(user_param,*handler,info+dest_id,info+my_id);
+	int my_id = net_param.nodeId;
+	int dest_id = (net_param.nodeId+1)%net_param.numNodes;
+	connect_qp_rc(net_param,*handler,info+dest_id,info+my_id);
 	
 	int ne;
 	struct ibv_wc *wc = NULL;
@@ -184,7 +184,7 @@ void rc_send_recv_benchmark_single_qp(UserParam &user_param, int is_same_addr,in
 	struct timespec start_timer,end_timer;
 	int start_timer_flag = 1;
 	
-	if(user_param.nodeId==0){
+	if(net_param.nodeId==0){
 		int cur_send = 0;
 		int cur_complete = 0;
 		for(int i=0;i<handler->tx_depth;i++){
@@ -264,38 +264,38 @@ void rc_send_recv_benchmark_single_qp(UserParam &user_param, int is_same_addr,in
 @rc_send_recv_test
 node 0 send 4 times 64 bytes data to node 1's four different places
 */
-void rc_send_recv_test(UserParam &user_param, int num_qps){ 
-	PingPongInfo *info = new PingPongInfo[user_param.numNodes * num_qps]();
-	PingPongInfo **infos = new PingPongInfo*[user_param.numNodes];
-	for(int i=0;i<user_param.numNodes;i++){
+void rc_send_recv_test(NetParam &net_param, int num_qps){ 
+	PingPongInfo *info = new PingPongInfo[net_param.numNodes * num_qps]();
+	PingPongInfo **infos = new PingPongInfo*[net_param.numNodes];
+	for(int i=0;i<net_param.numNodes;i++){
 		infos[i] = &info[i*num_qps];
 	}
 
 	size_t buf_size = 1*1024*1024;
-	void* buf = memalign(user_param.page_size,buf_size);
+	void* buf = memalign(net_param.page_size,buf_size);
 
 	QpHandler** handler = new QpHandler*[num_qps]();
 	for(int i=0;i<num_qps;i++){
-		handler[i] = create_qp_rc(user_param,buf,buf_size,infos[0]+i);
+		handler[i] = create_qp_rc(net_param,buf,buf_size,infos[0]+i);
 	}
-    exchange_data(user_param, (char*)info, sizeof(PingPongInfo)*num_qps);
-	for(int i=0;i<user_param.numNodes*num_qps;i++){
+    exchange_data(net_param, (char*)info, sizeof(PingPongInfo)*num_qps);
+	for(int i=0;i<net_param.numNodes*num_qps;i++){
 		print_pingpong_info(info+i);
 	}
 
-	if(user_param.numNodes == 2){//send/recv test
+	if(net_param.numNodes == 2){//send/recv test
 		for(int i=0;i<buf_size/sizeof(int);i++){
-			if(user_param.nodeId == 0){
+			if(net_param.nodeId == 0){
 				((int*)buf)[i] = i;
 			}else{
 				((int*)buf)[i] = 0;
 			}
 		}
 
-		int my_id = user_param.nodeId;
-		int dest_id = (user_param.nodeId+1)%user_param.numNodes;
+		int my_id = net_param.nodeId;
+		int dest_id = (net_param.nodeId+1)%net_param.numNodes;
 		for(int i=0;i<num_qps;i++){
-			connect_qp_rc(user_param,*handler[i],infos[dest_id]+i,infos[my_id]+i);
+			connect_qp_rc(net_param,*handler[i],infos[dest_id]+i,infos[my_id]+i);
 		}
 		
 		
@@ -305,7 +305,7 @@ void rc_send_recv_test(UserParam &user_param, int num_qps){
 		int ops = 4;
 		int count;
 		assert(ops*num_qps*64 <= buf_size);
-		if(user_param.nodeId==0){
+		if(net_param.nodeId==0){
 			for(int i=0;i<num_qps;i++){
 				for(int j=0;j<ops;j++){
 					post_send(*handler[i],(i*ops+j)*64,64);
@@ -352,12 +352,12 @@ void rc_send_recv_test(UserParam &user_param, int num_qps){
 
 int main(int argc, char *argv[]){
 	int num_threads = 48;
-	UserParam user_param;
-	get_opt(user_param, argc, argv);
-    socket_init(user_param);
-    roce_init(user_param,num_threads);
-    // rc_send_recv_test(user_param,4);
-	// rc_send_recv_benchmark_single_qp(user_param,0,2048);
-	rc_send_recv_benchmark_multi_qps(user_param,0,16*1024*1024,64,num_threads);
+	NetParam net_param;
+	get_opt(net_param, argc, argv);
+    socket_init(net_param);
+    roce_init(net_param,num_threads);
+    // rc_send_recv_test(net_param,4);
+	// rc_send_recv_benchmark_single_qp(net_param,0,2048);
+	rc_send_recv_benchmark_multi_qps(net_param,0,16*1024*1024,64,num_threads);
 	return 0;
 }

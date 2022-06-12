@@ -14,6 +14,8 @@ add_executable(libr_test ${SRCS} libr_test.cpp)
 
 set(HEAD_FILES
 	src/libr.hpp
+	src/util.hpp
+	src/connection_manager.hpp
 )
 
 target_link_libraries(demo ibverbs pthread)
