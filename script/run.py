@@ -75,12 +75,14 @@ if __name__ == "__main__":
 	sync_pairs 		= data["sync_pairs"]
 	run_cmd_path 	= data["run_cmd_path"]
 	base_cmd 		= data["base_cmd"]
+	extra_param		= data["extra_param"]
 	
-	base_cmd += " -s %s "%machine_ips[0]  #server ip
+	base_cmd += " -serverIp %s "%machine_ips[0]  #server ip
 	#initial nodes
 	index = 0
 	for ip in machine_ips:
-		cmd = base_cmd + " -n %d -i %d "%(len(machine_ips), index)
+		cmd = base_cmd + " -numNodes %d -nodeId %d "%(len(machine_ips), index)
+		cmd += extra_param
 		cmd += " |tee log"
 		print(cmd)
 		index += 1
