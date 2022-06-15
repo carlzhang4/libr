@@ -34,6 +34,8 @@ const char *link_layer_str(int8_t link_layer);
 
 int get_cache_line_size();
 
+void init_net_param(NetParam &net_param);
+
 void get_opt(NetParam &net_param,int argc, char* argv[]);
 
 void roce_init(NetParam &net_param, int num_contexts = 1);

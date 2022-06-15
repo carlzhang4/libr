@@ -76,6 +76,23 @@ int get_cache_line_size(){
 	return size;
 }
 
+void init_net_param(NetParam &net_param){
+	if(net_param.nodeId == 0){
+        net_param.sockfd = new int[net_param.numNodes];//zero is left unused
+    }else{
+        net_param.sockfd = new int;
+    }
+
+    net_param.ib_port = 1;//minimum 1
+    net_param.gid_index = 3;//minimum 1, 2 is v1
+    net_param.page_size = sysconf(_SC_PAGESIZE);
+    net_param.cacheline_size = get_cache_line_size();
+
+	LOG_I("%-20s : %d","NetParam.numNodes",net_param.numNodes);
+	LOG_I("%-20s : %d","NetParam.nodeId",net_param.nodeId);
+	LOG_I("%-20s : %s","NetParam.serverIp",net_param.serverIp.c_str());
+}
+
 void get_opt(NetParam &net_param,int argc, char* argv[]){
 	int opt;
 	const char *optstring = "n:i:s:";
