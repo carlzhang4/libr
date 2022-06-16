@@ -107,7 +107,7 @@ void rc_send_recv_benchmark_multi_qps(NetParam &net_param, int is_same_addr,size
 	QpHandler** qp_handlers = new QpHandler*[num_threads]();
 	for(int i=0;i<num_threads;i++){
 		// bufs[i] = memalign(net_param.page_size,buf_size);
-		bufs[i] = myMalloc2MbPage(buf_size);
+		bufs[i] = malloc_2m_hugepage(buf_size);
 		for(int j=0;j<buf_size/sizeof(int);j++){
 			if(net_param.nodeId == 0){
 				((int**)bufs)[i][j] = j;
