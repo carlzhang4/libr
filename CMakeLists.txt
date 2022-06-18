@@ -18,11 +18,11 @@ set(HEAD_FILES
 	src/connection_manager.hpp
 )
 
-target_link_libraries(demo ibverbs pthread)
-target_link_libraries(libr_test ibverbs pthread)
+target_link_libraries(demo ibverbs pthread numa)
+target_link_libraries(libr_test ibverbs pthread numa)
 
 add_library(r SHARED ${SRCS})
-target_link_libraries(r ibverbs pthread)
+target_link_libraries(r ibverbs pthread numa)
 
 install(
 	TARGETS r

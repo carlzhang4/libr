@@ -6,6 +6,9 @@
 #include <infiniband/verbs.h>
 #include <sys/mman.h>
 #include <thread>
+#include <assert.h>
+#include <numaif.h>
+#include <numa.h>
 
 using namespace std;
 
@@ -90,6 +93,8 @@ printf("%-60s" format "\n",buf, ##__VA_ARGS__);}
 exit(1);
 
 void *malloc_2m_hugepage(size_t size);
+
+void* malloc_2m_numa(size_t buf_size, int node_id);
 
 void set_cpu(thread& t,int cpu_index);
 #endif
