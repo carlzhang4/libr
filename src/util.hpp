@@ -74,7 +74,7 @@ class QpHandler{
 #ifdef DEBUG
 #define LOG_D(format, ...) \
 {char buf[60];\
-snprintf(buf,60,"[DEBUG][%s:%d][%s]", __FILENAME__,  __LINE__, __FUNCTION__ );\
+snprintf(buf,60,"[DEBUG][%s][%s:%d][%s]",time_string(), __FILENAME__,  __LINE__, __FUNCTION__ );\
 printf("%-60s" format "\n",buf, ##__VA_ARGS__);}
 #else
 #define LOG_D(format, ...)
@@ -83,13 +83,13 @@ printf("%-60s" format "\n",buf, ##__VA_ARGS__);}
 #ifdef INFO
 #define LOG_I(format, ...)  \
 {char buf[60];\
-snprintf(buf,60,"[INFO][%s:%d][%s]", __FILENAME__,  __LINE__, __FUNCTION__ );\
+snprintf(buf,60,"[INFO][%s][%s:%d][%s]",time_string(), __FILENAME__,  __LINE__, __FUNCTION__ );\
 printf("%-60s" format "\n",buf, ##__VA_ARGS__);}
 #else
 #define LOG_I(format, ...)
 #endif
 
-#define LOG_E(format, ...) fprintf(stderr, "[ERROR][%s:%d][%s]: "#format "\n", __FILENAME__, __LINE__, __FUNCTION__, ##__VA_ARGS__);\
+#define LOG_E(format, ...) fprintf(stderr, "[ERROR][%s][%s:%d][%s]: "#format "\n",time_string(), __FILENAME__, __LINE__, __FUNCTION__, ##__VA_ARGS__);\
 exit(1);
 
 void *malloc_2m_hugepage(size_t size);
@@ -97,4 +97,6 @@ void *malloc_2m_hugepage(size_t size);
 void* malloc_2m_numa(size_t buf_size, int node_id);
 
 void set_cpu(thread& t,int cpu_index);
+
+char * time_string();
 #endif

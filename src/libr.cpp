@@ -244,8 +244,6 @@ QpHandler* create_qp_rc(NetParam& net_param, void* buf, size_t size, struct Ping
 	info->vaddr = (uintptr_t)buf;
 	memcpy(info->gid.raw, temp_gid.raw, 16);
 
-	LOG_D("create PSN %#x",info->psn);
-
 	qp_handler->buf = (size_t)buf;
 	qp_handler->send_cq = send_cq;
 	qp_handler->recv_cq = recv_cq;
