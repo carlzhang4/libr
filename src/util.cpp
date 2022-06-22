@@ -26,7 +26,9 @@ void* malloc_2m_numa(size_t buf_size, int node_id){
 		bufs[i] =(void*) ((ulong)buf + i*page_size);
 	}
 	int rc = move_pages(getpid(), num_pages, bufs, nodes, status, MPOL_MF_MOVE_ALL);
-	assert(rc == 0);
+	if(rc != 0){
+		LOG_E("Move page failed, maybe you forget to use 'sudo'");
+	}
 	for(int i=0;i<num_pages;i++){
 		assert(status[i] == node_id);
 	}

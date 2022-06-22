@@ -89,7 +89,7 @@ printf("%-60s" format "\n",buf, ##__VA_ARGS__);}
 #define LOG_I(format, ...)
 #endif
 
-#define LOG_E(format, ...) fprintf(stderr, "[ERROR][%s][%s:%d][%s]: "#format "\n",time_string(), __FILENAME__, __LINE__, __FUNCTION__, ##__VA_ARGS__);\
+#define LOG_E(format, ...) fprintf(stderr, "[ERROR][%s][%s:%d][%s]: " format "\n",time_string(), __FILENAME__, __LINE__, __FUNCTION__, ##__VA_ARGS__);\
 exit(1);
 
 void *malloc_2m_hugepage(size_t size);
