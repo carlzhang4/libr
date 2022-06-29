@@ -7,7 +7,7 @@ void *malloc_2m_hugepage(size_t size) {
 	if(p == MAP_FAILED){
 		LOG_E("MAP_FAILED");
 	}
-	return mmap(NULL, size, protection, flags, -1, 0);
+	return p;
 }
 
 void* malloc_2m_numa(size_t buf_size, int node_id){
@@ -23,7 +23,7 @@ void* malloc_2m_numa(size_t buf_size, int node_id){
 	for(int i=0;i<num_pages;i++){
 		status[i] = 0;
 		nodes[i] = node_id;
-		bufs[i] =(void*) ((ulong)buf + i*page_size);
+		bufs[i] =(void*) ((uint64_t)buf + (uint64_t)(i) * page_size);
 	}
 	int rc = move_pages(getpid(), num_pages, bufs, nodes, status, MPOL_MF_MOVE_ALL);
 	if(rc != 0){
@@ -32,6 +32,11 @@ void* malloc_2m_numa(size_t buf_size, int node_id){
 	for(int i=0;i<num_pages;i++){
 		assert(status[i] == node_id);
 	}
+
+	delete [] status;
+	delete [] nodes;
+	delete [] bufs;
+	
 	return buf;
 }
 
@@ -49,7 +54,7 @@ char * time_string() {
   struct timespec ts;
   clock_gettime( CLOCK_REALTIME, &ts);
   struct tm * timeinfo = localtime(&ts.tv_sec);
-  static char timeStr[20];
+  static char timeStr[60];
   sprintf(timeStr, "%.2d:%.2d:%.2d.%.3ld", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, ts.tv_nsec / 1000000);
   return timeStr;
 }

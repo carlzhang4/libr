@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <numaif.h>
 #include <numa.h>
+#include <unistd.h>
 
 using namespace std;
 
