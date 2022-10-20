@@ -1,5 +1,5 @@
-#ifndef __UTIL_HPP__
-#define __UTIL_HPP__
+#ifndef __UTIL_LIBR_HPP__
+#define __UTIL_LIBR_HPP__
 
 #include <stdio.h>
 #include <string>
@@ -10,6 +10,7 @@
 #include <numaif.h>
 #include <numa.h>
 #include <unistd.h>
+#include <mutex>
 
 using namespace std;
 
@@ -98,6 +99,8 @@ void *malloc_2m_hugepage(size_t size);
 void* malloc_2m_numa(size_t buf_size, int node_id);
 
 void set_cpu(thread& t,int cpu_index);
+
+void wait_scheduling(int thread_index,mutex& IO_LOCK);
 
 char * time_string();
 #endif

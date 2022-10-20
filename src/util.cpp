@@ -50,6 +50,14 @@ void set_cpu(thread& t,int cpu_index){
 	}
 }
 
+void wait_scheduling(int thread_index,mutex& IO_LOCK){
+	while(thread_index != sched_getcpu()){
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));//wait set affinity success
+	}
+	std::lock_guard<std::mutex> guard(IO_LOCK);
+	LOG_I("Thread [%2d] has been moved to core [%2d]",thread_index,sched_getcpu());
+}
+
 char * time_string() {
   struct timespec ts;
   clock_gettime( CLOCK_REALTIME, &ts);
