@@ -13,6 +13,8 @@ aux_source_directory(src SRCS)
 
 add_executable(libr_test ${SRCS} libr_test.cpp)
 
+add_executable(rdma_bench ${SRCS} rdma_bench.cpp)
+
 set(HEAD_FILES
 	src/libr.hpp
 	src/util.hpp
@@ -21,6 +23,7 @@ set(HEAD_FILES
 
 # target_link_libraries(demo ibverbs pthread numa)
 target_link_libraries(libr_test ibverbs pthread numa)
+target_link_libraries(rdma_bench ibverbs pthread numa gflags)
 
 add_library(r SHARED ${SRCS})
 target_link_libraries(r ibverbs pthread numa)
