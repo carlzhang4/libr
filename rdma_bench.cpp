@@ -18,84 +18,6 @@ int CORE_OFFSET;
 int BUF_SIZE;
 int OUTSTANDING = 48;
 
-class TimeUtil{
-	public:
-		int execute_once_flag;
-		struct timespec cur_time;
-		double duration_us;
-		int start_count;
-		int end_count;
-	TimeUtil(){
-		execute_once_flag = 1;
-		duration_us = 0.0;
-		start_count = 0;
-		end_count = 0;
-	}
-	void start_once(){
-		if(execute_once_flag){
-			start();
-			execute_once_flag = 0;
-		}
-	}
-	void start(){
-		clock_gettime(CLOCK_MONOTONIC, &cur_time);
-		duration_us -= 1.0*(cur_time.tv_sec*1e6 + cur_time.tv_nsec/1e3);
-		start_count++;
-		// LOG_D("Start seconds [%d] s",cur_time.tv_sec);
-	}
-	void end(){
-		clock_gettime(CLOCK_MONOTONIC, &cur_time);
-		duration_us += 1.0*(cur_time.tv_sec*1e6 + cur_time.tv_nsec/1e3);
-		end_count++;
-		// LOG_D("End seconds [%d] s",cur_time.tv_sec);
-	}
-	void show(string str){
-		assert(start_count==end_count);
-		LOG_I("%s [%.2f] us, average [%.2f] us",str.c_str(),duration_us,duration_us/start_count);
-	}
-	double get_seconds(){
-		assert(start_count==end_count);
-		return duration_us/1e6;
-	}
-};
-
-class OffsetHandler{
-	private:
-		int max_num;
-		int step_size;
-		int buf_offset;
-		size_t cur;
-	
-	public:
-	OffsetHandler(){
-		cur = 0;
-	}
-
-	OffsetHandler(int max_num,int step_size,int buf_offset):max_num(max_num),step_size(step_size),buf_offset(buf_offset){	
-		cur = 0;
-	}
-	void init(int max_num,int step_size,int buf_offset){
-		cur = 0;
-		this->max_num = max_num;
-		this->step_size = step_size;
-		this->buf_offset = buf_offset;
-	}
-	size_t step(){
-		size_t ret = offset();
-		cur+=1;
-		return ret;
-	}
-	size_t offset(){
-		return (cur%max_num)*step_size + buf_offset;
-	}
-	size_t index(){
-		return cur;
-	}
-	int index_mod(){
-		return cur%max_num;
-	}
-};
-
 void sub_task_server(int thread_index, QpHandler* handler, void* buf, size_t ops){
 	wait_scheduling(thread_index,IO_LOCK);
 	TimeUtil global_timer;
@@ -246,6 +168,8 @@ void sub_task_client(int thread_index, QpHandler* handler, void* buf, size_t ops
 	LOG_I("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs",thread_index,duration,speed);
 
 	timer.show("Latency");
+	timer.show_percentage(0.99,"99th");
+	timer.show_percentage(0.999,"999th");
 }
 
 void benchmark(NetParam &net_param){

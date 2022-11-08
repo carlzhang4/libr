@@ -103,4 +103,116 @@ void set_cpu(thread& t,int cpu_index);
 void wait_scheduling(int thread_index,mutex& IO_LOCK);
 
 char * time_string();
+
+class TimeUtil{
+	private:
+		int MAX_INFLIGHT;
+		int STEP;//1us divide into #STEP shares
+		int BUCKET_NUM;
+		int execute_once_flag;
+		double *start_arr;
+		size_t start_idx;
+		size_t end_idx;
+		int* buckets;
+	public:
+		struct timespec cur_time;
+		double duration_us;
+	TimeUtil(int bucket_num=1024,int step=10,int max_inflight=512){
+		execute_once_flag = 1;
+		duration_us = 0.0;
+
+		BUCKET_NUM = bucket_num;
+		STEP = step;
+		MAX_INFLIGHT = max_inflight;
+		start_arr = (double*)malloc(max_inflight*sizeof(double));
+		buckets = (int*)malloc(bucket_num*sizeof(int));
+		memset(buckets,0,bucket_num*sizeof(int));
+		start_idx = 0;
+		end_idx = 0;
+	}
+	void start_once(){
+		if(execute_once_flag){
+			start();
+			execute_once_flag = 0;
+		}
+	}
+	void start(){
+		clock_gettime(CLOCK_MONOTONIC, &cur_time);
+		double t_us = 1.0*(cur_time.tv_sec*1e6 + cur_time.tv_nsec/1e3);
+		duration_us -= t_us;
+
+		start_arr[start_idx%MAX_INFLIGHT] = t_us;
+		start_idx++;
+	}
+	void end(){
+		clock_gettime(CLOCK_MONOTONIC, &cur_time);
+		double t_us = 1.0*(cur_time.tv_sec*1e6 + cur_time.tv_nsec/1e3);
+		duration_us += t_us;
+
+		double latency = t_us - start_arr[end_idx%MAX_INFLIGHT];
+		int l = (int)(latency*STEP);
+		if(l>=BUCKET_NUM){
+			buckets[BUCKET_NUM-1]++;
+		}else{
+			buckets[l]++;
+		}
+		end_idx++;
+	}
+	void show(string str){
+		assert(start_idx==end_idx);
+		LOG_I("%s [%.2f] us, average [%.2f] us",str.c_str(),duration_us,duration_us/start_idx);
+	}
+	double get_seconds(){
+		assert(start_idx==end_idx);
+		return duration_us/1e6;
+	}
+	void show_percentage(double per, string str){
+		size_t num = 0;
+		size_t div = (size_t)(per*start_idx);
+		for(int i=0;i<BUCKET_NUM;i++){
+			num+=buckets[i];
+			if(num>=div){
+				LOG_I("%s [%.2f] us",str.c_str(), 1.0*i/STEP);
+				break;
+			}
+		}
+	}
+};
+
+class OffsetHandler{
+	private:
+		int max_num;
+		int step_size;
+		int buf_offset;
+		size_t cur;
+	
+	public:
+	OffsetHandler(){
+		cur = 0;
+	}
+
+	OffsetHandler(int max_num,int step_size,int buf_offset):max_num(max_num),step_size(step_size),buf_offset(buf_offset){	
+		cur = 0;
+	}
+	void init(int max_num,int step_size,int buf_offset){
+		cur = 0;
+		this->max_num = max_num;
+		this->step_size = step_size;
+		this->buf_offset = buf_offset;
+	}
+	size_t step(){
+		size_t ret = offset();
+		cur+=1;
+		return ret;
+	}
+	size_t offset(){
+		return (cur%max_num)*step_size + buf_offset;
+	}
+	size_t index(){
+		return cur;
+	}
+	int index_mod(){
+		return cur%max_num;
+	}
+};
 #endif
