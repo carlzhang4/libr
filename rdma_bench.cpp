@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <stdio.h>
 #include <time.h>
+#include <atomic>
 #include <gflags/gflags.h>
 #include "libr.hpp"
 
@@ -21,6 +22,11 @@ int GID_INDEX;
 int NUMA_NODE;
 
 int OUTSTANDING = 48;
+
+std::atomic<bool> stop_flag = false;
+
+void ctrl_c_handler(int) { stop_flag = true; }
+
 
 void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops) {
 	wait_scheduling(thread_index, IO_LOCK);
@@ -47,7 +53,7 @@ void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops
 	}
 	int done = 0;
 
-	while (!done) {
+	while (!done && !stop_flag) {
 		ne_recv = poll_recv_cq(*handler, wc_recv);
 		if (ne_recv != 0) {
 			global_timer.start_once();
@@ -126,7 +132,7 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
 		post_recv(*handler, recv.offset(), PACK_SIZE);
 		recv.step();
 	}
-	while (recv_comp.index() < ops || send_comp.index() < ops) {
+	while ((recv_comp.index() < ops || send_comp.index() < ops) && !stop_flag) {
 		ne_send = poll_send_cq(*handler, wc_send);
 		if (ne_send != 0) {
 			global_timer.start_once();
@@ -174,6 +180,9 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
 	timer.show("Latency");
 	timer.show_percentage(0.99, "99th");
 	timer.show_percentage(0.999, "999th");
+
+	free(wc_send);
+	free(wc_recv);
 }
 
 void benchmark(NetParam &net_param) {
@@ -213,10 +222,11 @@ void benchmark(NetParam &net_param) {
 	struct timespec start_timer, end_timer;
 	clock_gettime(CLOCK_MONOTONIC, &start_timer);
 	for (int i = 0;i < NUM_THREADS;i++) {
+		int now_index = get_cpu_index_with_numa(i + CORE_OFFSET, net_param.numa_node);
 		if (net_param.nodeId == 0) {
-			threads[i] = thread(sub_task_server, i + CORE_OFFSET, qp_handlers[i], bufs[i], ops);
+			threads[i] = thread(sub_task_server, now_index, qp_handlers[i], bufs[i], ops);
 		} else if (net_param.nodeId == 1) {
-			threads[i] = thread(sub_task_client, i + CORE_OFFSET, qp_handlers[i], bufs[i], ops);
+			threads[i] = thread(sub_task_client, now_index, qp_handlers[i], bufs[i], ops);
 		}
 		set_cpu_with_numa(threads[i], i + CORE_OFFSET, net_param.numa_node);
 	}
@@ -224,6 +234,26 @@ void benchmark(NetParam &net_param) {
 		threads[i].join();
 	}
 	clock_gettime(CLOCK_MONOTONIC, &end_timer);
+
+	for (int i = 0;i < NUM_THREADS;i++) {
+		free(qp_handlers[i]->send_sge_list);
+		free(qp_handlers[i]->recv_sge_list);
+		free(qp_handlers[i]->send_wr);
+		free(qp_handlers[i]->recv_wr);
+
+		ibv_destroy_qp(qp_handlers[i]->qp);
+		ibv_dereg_mr(qp_handlers[i]->mr);
+		ibv_destroy_cq(qp_handlers[i]->send_cq);
+		ibv_destroy_cq(qp_handlers[i]->recv_cq);
+		ibv_dealloc_pd(qp_handlers[i]->pd);
+
+		ibv_close_device(net_param.contexts[i]);
+		free(qp_handlers[i]);
+	}
+
+	delete[]info;
+	delete[]bufs;
+	delete[]qp_handlers;
 }
 
 DEFINE_int32(iterations, 1000, "iterations");
@@ -239,6 +269,9 @@ DEFINE_int32(gidIndex, 3, "gidIndex");
 DEFINE_int32(numaNode, 0, "numaNode");
 
 int main(int argc, char *argv[]) {
+	signal(SIGINT, ctrl_c_handler);
+	signal(SIGTERM, ctrl_c_handler);
+
 	gflags::ParseCommandLineFlags(&argc, &argv, true);
 
 	ITERATIONS = FLAGS_iterations;

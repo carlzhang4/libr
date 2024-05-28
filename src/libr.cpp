@@ -389,7 +389,8 @@ void post_send(QpHandler &qp_handler, size_t offset, int length) {
 	if (length <= qp_handler.max_inline_size) {
 		qp_handler.send_wr[0].send_flags |= IBV_SEND_INLINE;
 	}
-	assert(ibv_post_send(qp_handler.qp, &qp_handler.send_wr[0], NULL) == 0);
+	// fuck https://github.com/linux-rdma/rdma-core/blob/6cd09097ad2eebde9a7fa3d3bb09a2cea6e3c2d6/providers/rxe/rxe.c#L1665-L1666
+	assert(ibv_post_send(qp_handler.qp, &qp_handler.send_wr[0], &qp_handler.send_bar_wr) == 0);
 	// qp_handler.send_wr[0].send_flags = IBV_SEND_SIGNALED;
 	// qp_handler.send_wr[0].wr_id = 0;
 }
@@ -397,7 +398,8 @@ void post_send(QpHandler &qp_handler, size_t offset, int length) {
 void post_recv(QpHandler &qp_handler, size_t offset, int length) {
 	qp_handler.recv_sge_list[0].addr = qp_handler.buf + offset;
 	qp_handler.recv_sge_list[0].length = length;
-	assert(ibv_post_recv(qp_handler.qp, &qp_handler.recv_wr[0], NULL) == 0);
+	// fuck https://github.com/linux-rdma/rdma-core/blob/6cd09097ad2eebde9a7fa3d3bb09a2cea6e3c2d6/providers/rxe/rxe.c#L1665-L1666
+	assert(ibv_post_recv(qp_handler.qp, &qp_handler.recv_wr[0], &qp_handler.recv_bar_wr) == 0);
 }
 
 int poll_send_cq(QpHandler &qp_handler, struct ibv_wc *wc) {

@@ -59,6 +59,8 @@ public:
 	struct ibv_sge *recv_sge_list;
 	struct ibv_send_wr *send_wr;
 	struct ibv_recv_wr *recv_wr;
+	struct ibv_send_wr *send_bar_wr;
+	struct ibv_recv_wr *recv_bar_wr;
 	size_t buf;
 	size_t remote_buf;
 	unsigned int remote_rkey;
@@ -106,6 +108,8 @@ void *malloc_2m_numa(size_t buf_size, int node_id);
 void set_cpu(thread &t, int cpu_index);
 
 void set_cpu_with_numa(thread &t, int cpu_index, int numa_node);
+
+int get_cpu_index_with_numa(int cpu_index, int numa_node);
 
 void wait_scheduling(int thread_index, mutex &IO_LOCK);
 
