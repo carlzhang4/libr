@@ -84,7 +84,6 @@ void init_net_param(NetParam &net_param) {
 	}
 
 	net_param.ib_port = 1;//minimum 1
-	net_param.gid_index = 3;//minimum 1, 2 is v1
 	net_param.page_size = sysconf(_SC_PAGESIZE);
 	net_param.cacheline_size = get_cache_line_size();
 
@@ -133,7 +132,7 @@ void get_opt(NetParam &net_param, int argc, char *argv[]) {
 void roce_init(NetParam &net_param, int num_contexts) {
 	net_param.num_contexts = num_contexts;
 	ALLOCATE(net_param.contexts, struct ibv_context *, num_contexts);
-	struct ibv_device *ib_dev = ctx_find_dev("mlx5_0");
+	struct ibv_device *ib_dev = ctx_find_dev(net_param.device_name.c_str());
 	for (int i = 0;i < num_contexts;i++) {
 		net_param.contexts[i] = ctx_open_device(ib_dev);
 	}
@@ -294,7 +293,26 @@ void init_wr_base_send_recv(QpHandler &qp_handler) {
 
 }
 
-void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongInfo *info, struct PingPongInfo *my_info) {
+void init_wr_base_write(QpHandler &qp_handler) {
+	//write
+	memset(qp_handler.send_wr, 0, sizeof(struct ibv_send_wr) * qp_handler.num_wrs);
+	ibv_send_wr *send_wr = qp_handler.send_wr;
+	ibv_sge *send_sge_list = qp_handler.send_sge_list;
+
+	send_sge_list[0].addr = qp_handler.buf;
+	send_sge_list[0].lkey = qp_handler.mr->lkey;
+	send_wr[0].wr.rdma.remote_addr = qp_handler.remote_buf;
+	send_wr[0].wr.rdma.rkey = qp_handler.remote_rkey;
+
+	send_wr[0].sg_list = send_sge_list;
+	send_wr[0].num_sge = 1;
+	send_wr[0].wr_id = 0;//todo
+	send_wr[0].next = NULL;
+	send_wr[0].send_flags = IBV_SEND_SIGNALED;
+	send_wr[0].opcode = IBV_WR_RDMA_WRITE;
+}
+
+void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongInfo *remote_info, struct PingPongInfo *local_info) {
 	struct ibv_ah *ah;//todo
 	(void)ah;
 	struct ibv_qp_attr attr;
@@ -303,28 +321,28 @@ void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongIn
 	attr.qp_state = IBV_QPS_RTR;
 	attr.ah_attr.src_path_bits = 0;
 	attr.ah_attr.port_num = net_param.ib_port;
-	attr.ah_attr.dlid = info->lid;
+	attr.ah_attr.dlid = remote_info->lid;
 	attr.ah_attr.sl = 0;//service level default 0
 	attr.ah_attr.is_global = 1;
-	attr.ah_attr.grh.dgid = info->gid;
+	attr.ah_attr.grh.dgid = remote_info->gid;
 	attr.ah_attr.grh.sgid_index = net_param.gid_index;
 	attr.ah_attr.grh.hop_limit = 0xFF;
 	attr.ah_attr.grh.traffic_class = 0;
 
 	//UD does not need below code
 	attr.path_mtu = net_param.cur_mtu;
-	attr.dest_qp_num = info->qpn;
-	attr.rq_psn = info->psn;
+	attr.dest_qp_num = remote_info->qpn;
+	attr.rq_psn = remote_info->psn;
 	flags |= (IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN);
 
 	//only for RC
-	attr.max_dest_rd_atomic = info->out_reads;
+	attr.max_dest_rd_atomic = remote_info->out_reads;
 	attr.min_rnr_timer = MIN_RNR_TIMER;
 	flags |= (IBV_QP_MIN_RNR_TIMER | IBV_QP_MAX_DEST_RD_ATOMIC);
 
 	//modify qp to rtr
 	assert(ibv_modify_qp(qp_handler.qp, &attr, flags) == 0);
-	LOG_D("Connected success, local QPN:%#06x, remote QPN:%#08x", my_info->qpn, info->qpn);
+	LOG_D("Connected success, local QPN:%#06x, remote QPN:%#08x", local_info->qpn, remote_info->qpn);
 
 	{
 		//modify qp to rts
@@ -332,17 +350,20 @@ void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongIn
 		struct ibv_qp_attr *_attr = &attr;
 		_attr->qp_state = IBV_QPS_RTS;
 		flags |= IBV_QP_SQ_PSN;
-		_attr->sq_psn = my_info->psn;
+		_attr->sq_psn = local_info->psn;
 
 		//only for RC
 		_attr->timeout = DEF_QP_TIME;
 		_attr->retry_cnt = 7;
 		_attr->rnr_retry = 7;
-		_attr->max_rd_atomic = info->out_reads;
+		_attr->max_rd_atomic = remote_info->out_reads;
 		flags |= (IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_MAX_QP_RD_ATOMIC);
 		assert(ibv_modify_qp(qp_handler.qp, _attr, flags) == 0);
 	}
 	ah = ibv_create_ah(qp_handler.pd, &(attr.ah_attr));
+
+	qp_handler.remote_buf = remote_info->vaddr;
+	qp_handler.remote_rkey = remote_info->rkey;
 
 	init_wr_base_send_recv(qp_handler);
 }

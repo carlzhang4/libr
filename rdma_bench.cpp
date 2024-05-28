@@ -16,6 +16,10 @@ int PACK_SIZE;
 int NUM_THREADS;
 int CORE_OFFSET;
 int BUF_SIZE;
+string DEVICE_NAME;
+int GID_INDEX;
+int NUMA_NODE;
+
 int OUTSTANDING = 48;
 
 void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops) {
@@ -185,7 +189,7 @@ void benchmark(NetParam &net_param) {
 	void **bufs = new void *[NUM_THREADS];
 	QpHandler **qp_handlers = new QpHandler * [NUM_THREADS]();
 	for (int i = 0;i < NUM_THREADS;i++) {
-		bufs[i] = malloc_2m_hugepage(BUF_SIZE);
+		bufs[i] = malloc_2m_numa(BUF_SIZE, net_param.numa_node);
 		for (int j = 0;j < BUF_SIZE / static_cast<int>(sizeof(int));j++) {
 			if (net_param.nodeId == 0) {
 				(reinterpret_cast<int **> (bufs))[i][j] = 0;
@@ -214,7 +218,7 @@ void benchmark(NetParam &net_param) {
 		} else if (net_param.nodeId == 1) {
 			threads[i] = thread(sub_task_client, i + CORE_OFFSET, qp_handlers[i], bufs[i], ops);
 		}
-		set_cpu(threads[i], i + CORE_OFFSET);
+		set_cpu_with_numa(threads[i], i + CORE_OFFSET, net_param.numa_node);
 	}
 	for (int i = 0;i < NUM_THREADS;i++) {
 		threads[i].join();
@@ -230,7 +234,9 @@ DEFINE_string(serverIp, "", "serverIp");
 DEFINE_int32(coreOffset, 0, "coreOffset");
 DEFINE_int32(bufSize, 1073741824, "bufSize");
 DEFINE_int32(numPack, 1024, "numPack");
-
+DEFINE_string(deviceName, "mlx5_0", "deviceName");
+DEFINE_int32(gidIndex, 3, "gidIndex");
+DEFINE_int32(numaNode, 0, "numaNode");
 
 int main(int argc, char *argv[]) {
 	gflags::ParseCommandLineFlags(&argc, &argv, true);
@@ -241,14 +247,19 @@ int main(int argc, char *argv[]) {
 	CORE_OFFSET = FLAGS_coreOffset;
 	BUF_SIZE = FLAGS_bufSize;
 	NUM_PACK = FLAGS_numPack;
-
+	DEVICE_NAME = FLAGS_deviceName;
+	GID_INDEX = FLAGS_gidIndex;
+	NUMA_NODE = FLAGS_numaNode;
 
 	NetParam net_param;
 	net_param.numNodes = 2;
 	net_param.nodeId = FLAGS_nodeId;
 	net_param.serverIp = FLAGS_serverIp;
-	init_net_param(net_param);
+	net_param.device_name = DEVICE_NAME;
+	net_param.gid_index = GID_INDEX;
+	net_param.numa_node = NUMA_NODE;
 
+	init_net_param(net_param);
 	socket_init(net_param);
 	roce_init(net_param, NUM_THREADS);
 	benchmark(net_param);

@@ -50,6 +50,23 @@ void set_cpu(thread &t, int cpu_index) {
 	}
 }
 
+void set_cpu_with_numa(thread &t, int cpu_index, int numa_node) {
+	std::vector<size_t> cpu_cores_list;
+	auto num_lcores = static_cast<size_t>(numa_num_configured_cpus());
+
+	for (size_t i = 0; i < num_lcores; i++) {
+		if (numa_node == numa_node_of_cpu(static_cast<int>(i))) {
+			cpu_cores_list.push_back(i);
+		}
+	}
+
+	if (static_cast<size_t>(cpu_index) >= cpu_cores_list.size()) {
+		LOG_E("cpu_index[%d] >= cpu_cores_list.size()[%ld]", cpu_index, cpu_cores_list.size());
+	}
+
+	set_cpu(t, static_cast<int>(cpu_cores_list[cpu_index]));
+}
+
 void wait_scheduling(int thread_index, mutex &IO_LOCK) {
 	while (thread_index != sched_getcpu()) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));//wait set affinity success

@@ -6,6 +6,7 @@
 #include <infiniband/verbs.h>
 #include <sys/mman.h>
 #include <thread>
+#include <vector>
 #include <assert.h>
 #include <numaif.h>
 #include <numa.h>
@@ -25,8 +26,10 @@ public:
 	int *sockfd;
 
 	//system param, not changable
+	string 						device_name;
 	uint8_t						ib_port;
 	int							gid_index;
+	int 						numa_node;
 	enum ibv_mtu				cur_mtu;
 	int							page_size;
 	int							cacheline_size;
@@ -57,6 +60,8 @@ public:
 	struct ibv_send_wr *send_wr;
 	struct ibv_recv_wr *recv_wr;
 	size_t buf;
+	size_t remote_buf;
+	unsigned int remote_rkey;
 	int max_inline_size;
 	int num_wrs;
 	int num_sges;
@@ -99,6 +104,8 @@ void *malloc_2m_hugepage(size_t size);
 void *malloc_2m_numa(size_t buf_size, int node_id);
 
 void set_cpu(thread &t, int cpu_index);
+
+void set_cpu_with_numa(thread &t, int cpu_index, int numa_node);
 
 void wait_scheduling(int thread_index, mutex &IO_LOCK);
 
