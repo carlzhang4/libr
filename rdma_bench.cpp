@@ -102,6 +102,8 @@ void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops
 	std::lock_guard<std::mutex> guard(IO_LOCK);
 	LOG_I("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
 
+	free(wc_send);
+	free(wc_recv);
 }
 
 void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops) {
