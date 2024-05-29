@@ -182,7 +182,7 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	struct ibv_comp_channel *channel = NULL;
 	struct ibv_qp *qp;
 
-	int flags = IBV_ACCESS_LOCAL_WRITE;//sufficient for send/recv 
+	int flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;//send/recv/read/write 
 
 
 	ALLOCATE(send_sge_list, struct ibv_sge, num_sges);
@@ -389,6 +389,7 @@ void post_send(QpHandler &qp_handler, size_t offset, int length) {
 	if (length <= qp_handler.max_inline_size) {
 		qp_handler.send_wr[0].send_flags |= IBV_SEND_INLINE;
 	}
+	qp_handler.send_wr->wr_id = offset;
 	// fuck https://github.com/linux-rdma/rdma-core/blob/6cd09097ad2eebde9a7fa3d3bb09a2cea6e3c2d6/providers/rxe/rxe.c#L1665-L1666
 	assert(ibv_post_send(qp_handler.qp, &qp_handler.send_wr[0], &qp_handler.send_bar_wr) == 0);
 	// qp_handler.send_wr[0].send_flags = IBV_SEND_SIGNALED;
@@ -398,6 +399,7 @@ void post_send(QpHandler &qp_handler, size_t offset, int length) {
 void post_recv(QpHandler &qp_handler, size_t offset, int length) {
 	qp_handler.recv_sge_list[0].addr = qp_handler.buf + offset;
 	qp_handler.recv_sge_list[0].length = length;
+	qp_handler.recv_wr->wr_id = offset;
 	// fuck https://github.com/linux-rdma/rdma-core/blob/6cd09097ad2eebde9a7fa3d3bb09a2cea6e3c2d6/providers/rxe/rxe.c#L1665-L1666
 	assert(ibv_post_recv(qp_handler.qp, &qp_handler.recv_wr[0], &qp_handler.recv_bar_wr) == 0);
 }
