@@ -168,7 +168,7 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	int rx_depth = 512;
 	uint32_t max_inline_size = 0;
 
-	int num_wrs = 1;
+	int num_wrs = net_param.batch_size != 0 ? net_param.batch_size : 1;
 	int num_sges = num_wrs * 1;
 	struct ibv_sge *send_sge_list;
 	struct ibv_sge *recv_sge_list;
@@ -266,50 +266,64 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 
 void init_wr_base_send_recv(QpHandler &qp_handler) {
 	//send
+	assert(qp_handler.num_wrs == qp_handler.num_sges);
 	memset(qp_handler.send_wr, 0, sizeof(struct ibv_send_wr) * qp_handler.num_wrs);
 	ibv_send_wr *send_wr = qp_handler.send_wr;
 	ibv_sge *send_sge_list = qp_handler.send_sge_list;
 
-	send_sge_list[0].addr = qp_handler.buf;
-	send_sge_list[0].lkey = qp_handler.mr->lkey;
-	send_wr[0].sg_list = send_sge_list;
-	send_wr[0].num_sge = 1;
-	send_wr[0].wr_id = 1000;//todo
-	send_wr[0].next = NULL;
-	send_wr[0].send_flags = IBV_SEND_SIGNALED;
-	send_wr[0].opcode = IBV_WR_SEND;
+	for (int i = 0;i < qp_handler.num_wrs;i++) {
+		send_sge_list[i].addr = qp_handler.buf;
+		send_sge_list[i].lkey = qp_handler.mr->lkey;
+		send_wr[i].sg_list = send_sge_list + i;
+		send_wr[i].num_sge = 1;
+		send_wr[i].wr_id = 1000;//todo
+		send_wr[i].next = NULL;
+		send_wr[i].send_flags = IBV_SEND_SIGNALED;
+		send_wr[i].opcode = IBV_WR_SEND;
+		if (i > 0) {
+			send_wr[i - 1].next = &send_wr[i];
+		}
+	}
 
 	//recv
 	memset(qp_handler.recv_wr, 0, sizeof(struct ibv_recv_wr) * qp_handler.num_wrs);
 	ibv_recv_wr *recv_wr = qp_handler.recv_wr;
 	ibv_sge *recv_sge_list = qp_handler.recv_sge_list;
 
-	recv_sge_list[0].addr = qp_handler.buf;
-	recv_sge_list->lkey = qp_handler.mr->lkey;
-	recv_wr[0].sg_list = recv_sge_list;
-	recv_wr[0].num_sge = 1;
-	recv_wr[0].wr_id = 1001;//todo
-	recv_wr[0].next = NULL;//todo
+	for (int i = 0;i < qp_handler.num_wrs;i++) {
+		recv_sge_list[i].addr = qp_handler.buf;
+		recv_sge_list[i].lkey = qp_handler.mr->lkey;
+		recv_wr[i].sg_list = recv_sge_list + i;
+		recv_wr[i].num_sge = 1;
+		recv_wr[i].wr_id = 1001;//todo
+		recv_wr[i].next = NULL;//todo
+		if (i > 0) {
+			recv_wr[i - 1].next = &recv_wr[i];
+		}
+	}
 
 }
 
 void init_wr_base_write(QpHandler &qp_handler) {
 	//write
+	assert(qp_handler.num_wrs == qp_handler.num_sges);
 	memset(qp_handler.send_wr, 0, sizeof(struct ibv_send_wr) * qp_handler.num_wrs);
 	ibv_send_wr *send_wr = qp_handler.send_wr;
 	ibv_sge *send_sge_list = qp_handler.send_sge_list;
 
-	send_sge_list[0].addr = qp_handler.buf;
-	send_sge_list[0].lkey = qp_handler.mr->lkey;
-	send_wr[0].wr.rdma.remote_addr = qp_handler.remote_buf;
-	send_wr[0].wr.rdma.rkey = qp_handler.remote_rkey;
+	for (int i = 0;i < qp_handler.num_wrs;i++) {
+		send_sge_list[i].addr = qp_handler.buf;
+		send_sge_list[i].lkey = qp_handler.mr->lkey;
+		send_wr[i].wr.rdma.remote_addr = qp_handler.remote_buf;
+		send_wr[i].wr.rdma.rkey = qp_handler.remote_rkey;
 
-	send_wr[0].sg_list = send_sge_list;
-	send_wr[0].num_sge = 1;
-	send_wr[0].wr_id = 0;//todo
-	send_wr[0].next = NULL;
-	send_wr[0].send_flags = IBV_SEND_SIGNALED;
-	send_wr[0].opcode = IBV_WR_RDMA_WRITE;
+		send_wr[i].sg_list = send_sge_list + i;
+		send_wr[i].num_sge = 1;
+		send_wr[i].wr_id = 0;//todo
+		send_wr[i].next = NULL;
+		send_wr[i].send_flags = IBV_SEND_SIGNALED;
+		send_wr[i].opcode = IBV_WR_RDMA_WRITE;
+	}
 }
 
 void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongInfo *remote_info, struct PingPongInfo *local_info) {
@@ -390,16 +404,38 @@ void post_send(QpHandler &qp_handler, size_t offset, int length) {
 		qp_handler.send_wr[0].send_flags |= IBV_SEND_INLINE;
 	}
 	qp_handler.send_wr->wr_id = offset;
+	qp_handler.send_wr->next = NULL;
 	// fuck https://github.com/linux-rdma/rdma-core/blob/6cd09097ad2eebde9a7fa3d3bb09a2cea6e3c2d6/providers/rxe/rxe.c#L1665-L1666
 	assert(ibv_post_send(qp_handler.qp, &qp_handler.send_wr[0], &qp_handler.send_bar_wr) == 0);
 	// qp_handler.send_wr[0].send_flags = IBV_SEND_SIGNALED;
 	// qp_handler.send_wr[0].wr_id = 0;
 }
 
+void post_send_batch(QpHandler &qp_handler, int batch_size, size_t offset, int length) {
+	assert(batch_size <= qp_handler.num_wrs);
+	for (int i = 0;i < batch_size;i++) {
+		qp_handler.send_sge_list[i].addr = qp_handler.buf + offset;
+		qp_handler.send_sge_list[i].length = length;
+		if (length <= qp_handler.max_inline_size) {
+			qp_handler.send_wr[i].send_flags |= IBV_SEND_INLINE;
+		}
+		qp_handler.send_wr[i].wr_id = offset;
+		qp_handler.send_wr[i].next = NULL;
+		if (i > 0) {
+			qp_handler.send_wr[i - 1].next = &qp_handler.send_wr[i];
+		}
+	}
+	int res = ibv_post_send(qp_handler.qp, qp_handler.send_wr, &qp_handler.send_bar_wr);
+	if (res != 0) {
+		LOG_E("post_send error %d", res);
+	}
+}
+
 void post_recv(QpHandler &qp_handler, size_t offset, int length) {
 	qp_handler.recv_sge_list[0].addr = qp_handler.buf + offset;
 	qp_handler.recv_sge_list[0].length = length;
 	qp_handler.recv_wr->wr_id = offset;
+	qp_handler.recv_wr->next = NULL;
 	// fuck https://github.com/linux-rdma/rdma-core/blob/6cd09097ad2eebde9a7fa3d3bb09a2cea6e3c2d6/providers/rxe/rxe.c#L1665-L1666
 	assert(ibv_post_recv(qp_handler.qp, &qp_handler.recv_wr[0], &qp_handler.recv_bar_wr) == 0);
 }

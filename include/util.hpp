@@ -35,6 +35,7 @@ public:
 	int							cacheline_size;
 	struct ibv_context **contexts;
 	int							num_contexts;
+	int 						batch_size;
 };
 
 struct PingPongInfo {
@@ -214,6 +215,11 @@ public:
 	size_t step() {
 		size_t ret = offset();
 		cur += 1;
+		return ret;
+	}
+	size_t step(int step) {
+		size_t ret = offset();
+		cur += step;
 		return ret;
 	}
 	size_t offset() {
