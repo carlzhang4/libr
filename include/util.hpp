@@ -24,6 +24,7 @@ public:
 	string serverIp;
 	int numNodes;
 	int *sockfd;
+	int sock_port;
 
 	//system param, not changable
 	string 						device_name;

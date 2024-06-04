@@ -3,6 +3,10 @@
 #include "util.hpp"
 
 void socket_init(NetParam &net_param) {
+    if (net_param.sock_port == 0) {
+        net_param.sock_port = 6666;
+    }
+
     if (net_param.nodeId == 0) {
         printf("\n************************************\n");
         printf("* Waiting for client to connect... *\n");
@@ -13,7 +17,7 @@ void socket_init(NetParam &net_param) {
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_flags = AI_PASSIVE;
-        assert(getaddrinfo(NULL, SERVER_PORT, &hints, &server_address) >= 0);
+        assert(getaddrinfo(NULL, std::to_string(net_param.sock_port).c_str(), &hints, &server_address) >= 0);
         auto sockfd = socket(server_address->ai_family, server_address->ai_socktype, server_address->ai_protocol);
         assert(sockfd > 0);
         int reuse = 1;
@@ -35,7 +39,7 @@ void socket_init(NetParam &net_param) {
         addrinfo hints{};
         hints.ai_socktype = SOCK_STREAM;
         addrinfo *server_address{ nullptr };
-        assert(getaddrinfo(net_param.serverIp.c_str(), SERVER_PORT, &hints, &server_address) >= 0);
+        assert(getaddrinfo(net_param.serverIp.c_str(), std::to_string(net_param.sock_port).c_str(), &hints, &server_address) >= 0);
         int sockfd = socket(server_address->ai_family, server_address->ai_socktype, server_address->ai_protocol);
         assert(sockfd > 0);
         assert(connect(sockfd, server_address->ai_addr, server_address->ai_addrlen) == 0);

@@ -17,8 +17,7 @@
 #include <ctime>
 #include "util.hpp"
 
-#define SERVER_PORT             "6666"
 
 void socket_init(NetParam &net_param);
-void exchange_data(NetParam &net_param, char* data, int size);
+void exchange_data(NetParam &net_param, char *data, int size);
 #endif
