@@ -26,7 +26,6 @@ int GID_INDEX;
 int NUMA_NODE;
 int BATCH_SIZE = 1;
 int OUTSTANDING = 48;
-bool RECORD_FLAG;
 std::atomic<bool> stop_flag = false;
 
 void ctrl_c_handler(int) { stop_flag = true; }
