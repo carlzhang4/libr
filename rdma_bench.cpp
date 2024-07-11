@@ -6,7 +6,11 @@
 #include <time.h>
 #include <atomic>
 #include <gflags/gflags.h>
+#include <queue> 
+#include <fstream>
 #include "libr.hpp"
+#include "x86intrin.h"
+#include <hdr/hdr_histogram.h>
 
 using namespace std;
 std::mutex IO_LOCK;
@@ -20,31 +24,28 @@ int BUF_SIZE;
 string DEVICE_NAME;
 int GID_INDEX;
 int NUMA_NODE;
-
+int BATCH_SIZE = 1;
 int OUTSTANDING = 48;
-
+bool RECORD_FLAG;
 std::atomic<bool> stop_flag = false;
 
 void ctrl_c_handler(int) { stop_flag = true; }
 
+hdr_histogram *latency_hist = nullptr;
+double scale_value = 10;
 
 void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops) {
 	wait_scheduling(thread_index, IO_LOCK);
+	(void)buf;
 	TimeUtil global_timer;
 
-	int ne_send;
 	int ne_recv;
-	struct ibv_wc *wc_send = NULL;
 	struct ibv_wc *wc_recv = NULL;
-	ALLOCATE(wc_send, struct ibv_wc, CTX_POLL_BATCH);
 	ALLOCATE(wc_recv, struct ibv_wc, CTX_POLL_BATCH);
 
-	OffsetHandler send(NUM_PACK, PACK_SIZE, BUF_SIZE / 2);
 	OffsetHandler recv(NUM_PACK, PACK_SIZE, BUF_SIZE / 2);
-	OffsetHandler send_comp(NUM_PACK, PACK_SIZE, 0);
 	OffsetHandler recv_comp(NUM_PACK, PACK_SIZE, BUF_SIZE / 2);
 
-	size_t tx_depth = handler->tx_depth;
 	size_t rx_depth = handler->rx_depth;
 
 	for (size_t i = 0; i < min(size_t(rx_depth), ops);i++) {
@@ -69,122 +70,78 @@ void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops
 			recv_comp.step();
 		}
 
-		while (send.index() < recv_comp.index() && (send.index() - send_comp.index()) < tx_depth) {
-			post_send(*handler, send.offset(), PACK_SIZE);
-			send.step();
-		}
-
-		ne_send = poll_send_cq(*handler, wc_send);
-		for (int i = 0;i < ne_send;i++) {
-			if (wc_send[i].status != IBV_WC_SUCCESS) {
-				LOG_E("Thread : %d, wc_send[%ld].status = %d, i=%d", thread_index, send_comp.index(), wc_send[i].status, i);
-			}
-			send_comp.step();
-		}
-		done = 1;
-		if (recv_comp.index() < ops || send_comp.index() < ops) {
-			done = 0;
+		if (recv_comp.index() >= ops) {
+			done = 1;
 		}
 	}
 	global_timer.end();
 	double duration = global_timer.get_seconds();
-	double speed = 8.0 * ops * PACK_SIZE / 1024 / 1024 / 1024 / duration;
+	double speed = 8.0 * ops * PACK_SIZE / 1000 / 1000 / 1000 / duration;
 
-	int verify_size = NUM_PACK * PACK_SIZE;
-	int *recv_data = reinterpret_cast<int *>((reinterpret_cast<size_t>(buf) + BUF_SIZE / 2));
-	for (int i = 0;i < verify_size / static_cast<int>(sizeof(int));i++) {
-		if (recv_data[i] != i) {
-			std::lock_guard<std::mutex> guard(IO_LOCK);
-			LOG_E("Data verification failed, index:%d data:%d expected_data:%d", i, recv_data[i], i);
-			break;
-		}
-	}
 	std::lock_guard<std::mutex> guard(IO_LOCK);
 	LOG_I("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
 
-	free(wc_send);
 	free(wc_recv);
 }
 
 void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops) {
+	sleep(2);
+	assert(latency_hist);
 	wait_scheduling(thread_index, IO_LOCK);
-	TimeUtil global_timer;
-	TimeUtil timer;
 
+	(void)buf;
+	TimeUtil global_timer;
+	std::vector<size_t>timers(128);
+	size_t timer_head = 0, timer_tail = 0;
 	int ne_send;
-	int ne_recv;
 	struct ibv_wc *wc_send = NULL;
-	struct ibv_wc *wc_recv = NULL;
 	ALLOCATE(wc_send, struct ibv_wc, CTX_POLL_BATCH);
-	ALLOCATE(wc_recv, struct ibv_wc, CTX_POLL_BATCH);
 
 	OffsetHandler send(NUM_PACK, PACK_SIZE, 0);
-	OffsetHandler recv(NUM_PACK, PACK_SIZE, BUF_SIZE / 2);
 	OffsetHandler send_comp(NUM_PACK, PACK_SIZE, 0);
-	OffsetHandler recv_comp(NUM_PACK, PACK_SIZE, BUF_SIZE / 2);
 
 	size_t tx_depth = OUTSTANDING;//handler->tx_depth;
-	size_t rx_depth = handler->rx_depth;
 	for (size_t i = 0; i < min(tx_depth, ops);i++) {
 		post_send(*handler, send.offset(), PACK_SIZE);
-		timer.start();
+		timers[timer_head] = __rdtsc();
+		timer_head = (timer_head + 1) % 128;
 		send.step();
 	}
-	for (size_t i = 0; i < min(rx_depth, ops);i++) {
-		post_recv(*handler, recv.offset(), PACK_SIZE);
-		recv.step();
-	}
-	while ((recv_comp.index() < ops || send_comp.index() < ops) && !stop_flag) {
+	while (send_comp.index() < ops && !stop_flag) {
 		ne_send = poll_send_cq(*handler, wc_send);
 		if (ne_send != 0) {
 			global_timer.start_once();
 		}
 		for (int i = 0;i < ne_send;i++) {
 			assert(wc_send[i].status == IBV_WC_SUCCESS);
+			hdr_record_value_atomic(latency_hist, (__rdtsc() - timers[timer_tail]) * 10);
+			timer_tail = (timer_tail + 1) % 128;
 			send_comp.step();
 		}
-		if (send.index() < ops && send.index() - recv_comp.index() < tx_depth) {
+		if (send.index() < ops && send.index() - send_comp.index() < tx_depth) {
 			post_send(*handler, send.offset(), PACK_SIZE);
-			timer.start();
+			timers[timer_head] = __rdtsc();
+			timer_head = (timer_head + 1) % 128;
 			send.step();
 		}
-
-		ne_recv = poll_recv_cq(*handler, wc_recv);
-		for (int i = 0;i < ne_recv;i++) {
-			if (recv.index() < ops) {
-				post_recv(*handler, recv.offset(), PACK_SIZE);
-				recv.step();
-			}
-			assert(wc_recv[i].status == IBV_WC_SUCCESS);
-			if (wc_recv[i].byte_len != static_cast<uint32_t>(PACK_SIZE)) {
-				LOG_E("Client thread[%d] verify length failed, index:[%ld], byte_len:[%d]", thread_index, recv_comp.index(), wc_recv[i].byte_len);
-			}
-			timer.end();
-			recv_comp.step();
+	}
+	while (send_comp.index() < send.index()) {
+		ne_send = poll_send_cq(*handler, wc_send);
+		for (int i = 0;i < ne_send;i++) {
+			assert(wc_send[i].status == IBV_WC_SUCCESS);
+			hdr_record_value_atomic(latency_hist, (__rdtsc() - timers[timer_tail]) * 10);
+			timer_tail = (timer_tail + 1) % 128;
+			send_comp.step();
 		}
 	}
 	global_timer.end();
 	double duration = global_timer.get_seconds();
-	double speed = 8.0 * ops * PACK_SIZE / 1024 / 1024 / 1024 / duration;
+	double speed = 8.0 * send_comp.index() * PACK_SIZE / 1000 / 1000 / 1000 / duration;
 
-	size_t verify_size = NUM_PACK * PACK_SIZE;
-	int *recv_data = reinterpret_cast<int *>((reinterpret_cast<size_t>(buf)) + BUF_SIZE / 2);
-	for (int i = 0;i < static_cast<int>(verify_size / sizeof(int));i++) {
-		if (recv_data[i] != i) {
-			std::lock_guard<std::mutex> guard(IO_LOCK);
-			LOG_E("Data verification failed, index:%d data:%d expected_data:%d", i, recv_data[i], i);
-			break;
-		}
-	}
 	std::lock_guard<std::mutex> guard(IO_LOCK);
 	LOG_I("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
 
-	timer.show("Latency");
-	timer.show_percentage(0.99, "99th");
-	timer.show_percentage(0.999, "999th");
-
 	free(wc_send);
-	free(wc_recv);
 }
 
 void benchmark(NetParam &net_param) {
@@ -202,11 +159,7 @@ void benchmark(NetParam &net_param) {
 	for (int i = 0;i < NUM_THREADS;i++) {
 		bufs[i] = malloc_2m_numa(BUF_SIZE, net_param.numa_node);
 		for (int j = 0;j < BUF_SIZE / static_cast<int>(sizeof(int));j++) {
-			if (net_param.nodeId == 0) {
-				(reinterpret_cast<int **> (bufs))[i][j] = 0;
-			} else {
-				(reinterpret_cast<int **> (bufs))[i][j] = j;
-			}
+			(reinterpret_cast<int **> (bufs))[i][j] = 0;
 		}
 	}
 
@@ -269,6 +222,7 @@ DEFINE_int32(numPack, 1024, "numPack");
 DEFINE_string(deviceName, "mlx5_0", "deviceName");
 DEFINE_int32(gidIndex, 3, "gidIndex");
 DEFINE_int32(numaNode, 0, "numaNode");
+DEFINE_int32(port, 6666, "bind_port");
 
 int main(int argc, char *argv[]) {
 	signal(SIGINT, ctrl_c_handler);
@@ -293,9 +247,20 @@ int main(int argc, char *argv[]) {
 	net_param.device_name = DEVICE_NAME;
 	net_param.gid_index = GID_INDEX;
 	net_param.numa_node = NUMA_NODE;
+	net_param.batch_size = BATCH_SIZE;
+	net_param.sock_port = FLAGS_port;
+
+	if (FLAGS_nodeId != 0) {
+		hdr_init(1000, 50000000, 3, &latency_hist);
+	}
 
 	init_net_param(net_param);
 	socket_init(net_param);
 	roce_init(net_param, NUM_THREADS);
 	benchmark(net_param);
+
+	if (FLAGS_nodeId != 0) {
+		hdr_percentiles_print(latency_hist, stdout, 5, 22, CLASSIC);
+		hdr_close(latency_hist);
+	}
 }

@@ -4,9 +4,6 @@ project(libr)
 
 # add_compile_options(-g -o3 -fcoroutines -std=c++20 -static)
 
-set(CMAKE_C_COMPILER "gcc")
-set(CMAKE_CXX_COMPILER "g++")
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -30,6 +27,12 @@ set(HEAD_FILES
 
 include_directories("${CMAKE_SOURCE_DIR}/include")
 
+#sub-project: HdrHistogram
+include_directories(${CMAKE_SOURCE_DIR}/HdrHistogram/include)
+
+add_subdirectory(${CMAKE_SOURCE_DIR}/HdrHistogram)
+
+
 # add_executable(demo ${SRCS} demo.cpp)
 
 add_executable(libr_test ${SRCS} libr_test.cpp)
@@ -38,11 +41,11 @@ add_executable(rdma_bench ${SRCS} rdma_bench.cpp)
 
 
 # target_link_libraries(demo ibverbs pthread numa)
-target_link_libraries(libr_test ibverbs pthread numa)
-target_link_libraries(rdma_bench ibverbs pthread numa gflags)
+target_link_libraries(libr_test ibverbs pthread numa hdr_histogram_static)
+target_link_libraries(rdma_bench ibverbs pthread numa gflags hdr_histogram_static)
 
 add_library(r SHARED ${SRCS})
-target_link_libraries(r ibverbs pthread numa)
+target_link_libraries(r ibverbs pthread numa hdr_histogram_static)
 
 install(
 	TARGETS r
