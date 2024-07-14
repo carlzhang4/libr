@@ -8,6 +8,24 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    message(STATUS "Compile on DPU")
+    message(STATUS "Output Dir is /build_dpu")
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build_dpu)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build_dpu)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build_dpu)
+
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+    message(STATUS "Compile on HOST")
+    message(STATUS "Output Dir is /build_host")
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build_host)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build_host)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build_host)
+else()
+    # 在其他架构下的逻辑代码
+    message("Unknown architecture detected")
+    return()
+endif ()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -std=c++17 -Wall")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-old-style-cast -Wno-unused-function -Wno-missing-braces")
@@ -34,9 +52,10 @@ include_directories("${CMAKE_SOURCE_DIR}/include/devx")
 include_directories("${CMAKE_SOURCE_DIR}/include/fw")
 
 #sub-project: HdrHistogram
-include_directories(${CMAKE_SOURCE_DIR}/HdrHistogram/include)
+include_directories(${CMAKE_SOURCE_DIR}/HdrHistogram_c/include)
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/HdrHistogram)
+option(HDR_HISTOGRAM_BUILD_PROGRAMS OFF)
+add_subdirectory(${CMAKE_SOURCE_DIR}/HdrHistogram_c)
 
 
 # add_executable(demo ${SRCS} demo.cpp)
