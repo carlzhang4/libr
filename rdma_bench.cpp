@@ -9,7 +9,6 @@
 #include <queue> 
 #include <fstream>
 #include "libr.hpp"
-#include "x86intrin.h"
 #include <hdr/hdr_histogram.h>
 
 using namespace std;
@@ -102,7 +101,7 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
 	size_t tx_depth = OUTSTANDING;//handler->tx_depth;
 	for (size_t i = 0; i < min(tx_depth, ops);i++) {
 		post_send(*handler, send.offset(), PACK_SIZE);
-		timers[timer_head] = __rdtsc();
+		timers[timer_head] = get_tsc();
 		timer_head = (timer_head + 1) % 128;
 		send.step();
 	}
@@ -113,13 +112,13 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
 		}
 		for (int i = 0;i < ne_send;i++) {
 			assert(wc_send[i].status == IBV_WC_SUCCESS);
-			hdr_record_value_atomic(latency_hist, (__rdtsc() - timers[timer_tail]) * 10);
+			hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
 			timer_tail = (timer_tail + 1) % 128;
 			send_comp.step();
 		}
 		if (send.index() < ops && send.index() - send_comp.index() < tx_depth) {
 			post_send(*handler, send.offset(), PACK_SIZE);
-			timers[timer_head] = __rdtsc();
+			timers[timer_head] = get_tsc();
 			timer_head = (timer_head + 1) % 128;
 			send.step();
 		}
@@ -128,7 +127,7 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
 		ne_send = poll_send_cq(*handler, wc_send);
 		for (int i = 0;i < ne_send;i++) {
 			assert(wc_send[i].status == IBV_WC_SUCCESS);
-			hdr_record_value_atomic(latency_hist, (__rdtsc() - timers[timer_tail]) * 10);
+			hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
 			timer_tail = (timer_tail + 1) % 128;
 			send_comp.step();
 		}
@@ -259,7 +258,7 @@ int main(int argc, char *argv[]) {
 	benchmark(net_param);
 
 	if (FLAGS_nodeId != 0) {
-		hdr_percentiles_print(latency_hist, stdout, 5, 22, CLASSIC);
+		hdr_percentiles_print(latency_hist, stdout, 5, 10 * get_tsc_freq_per_ns(), CLASSIC);
 		hdr_close(latency_hist);
 	}
 }

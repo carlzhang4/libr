@@ -18,6 +18,31 @@
 #include "mr.h"
 #include "devx.h"
 
+
+#if defined(__x86_64__)
+#include "x86intrin.h"
+static double get_tsc_freq_per_ns() {
+    // MUST BE CHANGE BY 
+    // sudo journalctl -k --grep '^tsc:'  | cut -d' ' -f5-
+    return 2.5;
+}
+
+static size_t get_tsc() {
+    return __rdtsc();
+}
+#else 
+static double get_tsc_freq_per_ns() {
+    // sudo dmesg | grep resolution
+    return 0.330238342;
+}
+
+static size_t get_tsc() {
+    size_t tsc;
+    asm volatile("mrs %0, cntvct_el0" : "=r" (tsc)); ;
+    return tsc;
+}
+#endif
+
 #define MIN_RNR_TIMER		(12)
 
 #define DEF_QP_TIME   (14)

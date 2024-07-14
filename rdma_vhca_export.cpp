@@ -21,7 +21,6 @@ int NUM_THREADS;
 int NUMA_NODE;
 string DEVICE_NAME;
 bool USE_IBV_REG_MR;
-bool PORT;
 
 std::atomic<bool> stop_flag = false;
 
@@ -48,16 +47,17 @@ int main(int argc, char *argv[]) {
     NUMA_NODE = FLAGS_numaNode;
     DEVICE_NAME = FLAGS_deviceName;
     USE_IBV_REG_MR = FLAGS_useIbvRegMr;
-    PORT = FLAGS_port;
 
     NetParam net_param;
     net_param.numNodes = 2;
     net_param.nodeId = 0;
     net_param.device_name = DEVICE_NAME;
     net_param.numa_node = NUMA_NODE;
-    net_param.sock_port = PORT;
+    net_param.sock_port = FLAGS_port;
     net_param.sockfd = new int[128];
-
+    net_param.ib_port = 1;//minimum 1
+    net_param.page_size = sysconf(_SC_PAGESIZE);
+    net_param.cacheline_size = get_cache_line_size();
 
     roce_init(net_param, NUM_THREADS);
     struct devx_hca_capabilities caps;
@@ -136,7 +136,6 @@ int main(int argc, char *argv[]) {
             LOG_E("can't devx_dereg_mr\n");
             return -1;
         }
-        free(resources[i].addr);
         ibv_dealloc_pd(resources[i].pd);
         ibv_close_device(net_param.contexts[i]);
     }

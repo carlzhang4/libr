@@ -9,7 +9,6 @@
 #include <queue> 
 #include <fstream>
 #include "libr.hpp"
-#include "x86intrin.h"
 #include <hdr/hdr_histogram.h>
 
 using namespace std;
@@ -132,7 +131,7 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
 
     for (size_t i = 0; i < min(tx_depth, ops);i++) {
         post_send(*handler, send.offset(), PACK_SIZE);
-        timers[timer_head] = __rdtsc();
+        timers[timer_head] = get_tsc();
         timer_head = (timer_head + 1) % 128;
         send.step();
     }
@@ -147,7 +146,7 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
         }
         if (send.index() < ops && send.index() - recv_comp.index() < tx_depth) {
             post_send(*handler, send.offset(), PACK_SIZE);
-            timers[timer_head] = __rdtsc();
+            timers[timer_head] = get_tsc();
             timer_head = (timer_head + 1) % 128;
             send.step();
         }
@@ -158,7 +157,7 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
                 recv.step();
             }
             assert(wc_recv[i].status == IBV_WC_SUCCESS);
-            hdr_record_value_atomic(latency_hist, (__rdtsc() - timers[timer_tail]) * 10);
+            hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
             timer_tail = (timer_tail + 1) % 128;
 
             if (wc_recv[i].byte_len != static_cast<uint32_t>(PACK_SIZE)) {
@@ -294,7 +293,7 @@ int main(int argc, char *argv[]) {
     benchmark(net_param);
 
     if (FLAGS_nodeId != 0) {
-        hdr_percentiles_print(latency_hist, stdout, 5, 22, CLASSIC);
+        hdr_percentiles_print(latency_hist, stdout, 5, 10 * get_tsc_freq_per_ns(), CLASSIC);
         hdr_close(latency_hist);
     }
 }
