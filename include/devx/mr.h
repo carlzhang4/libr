@@ -19,7 +19,18 @@ struct devx_mr {
     uint16_t vhca_id;
 };
 
-static inline uint32_t align(uint32_t val, uint32_t alignment){
+struct vhca_resource {
+    ibv_pd *pd;
+    devx_mr *mr;
+
+    // exchanged
+    uint16_t vhca_id;
+    void *addr;
+    uint64_t size;
+    uint32_t mkey;
+};
+
+static inline uint32_t align(uint32_t val, uint32_t alignment) {
     return (val + alignment - 1) & ~(alignment - 1);
 }
 

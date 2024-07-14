@@ -47,12 +47,18 @@ add_executable(rdma_bench ${SRCS} rdma_bench.cpp)
 
 add_executable(rdma_bench_duplex ${SRCS} rdma_bench_duplex.cpp)
 
+add_executable(rdma_vhca_bench ${SRCS} rdma_vhca_bench.cpp)
+
+add_executable(rdma_vhca_export ${SRCS} rdma_vhca_export.cpp)
+
 set(LIBRARIES ${LIBRARIES} ibverbs pthread numa gflags hdr_histogram_static mlx5)
 
 # target_link_libraries(demo ibverbs pthread numa)
 target_link_libraries(libr_test ${LIBRARIES})
 target_link_libraries(rdma_bench ${LIBRARIES})
 target_link_libraries(rdma_bench_duplex ${LIBRARIES})
+target_link_libraries(rdma_vhca_bench ${LIBRARIES})
+target_link_libraries(rdma_vhca_export ${LIBRARIES})
 
 
 add_library(r SHARED ${SRCS})

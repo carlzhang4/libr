@@ -15,6 +15,8 @@
 #include <infiniband/verbs.h>
 #include "util.hpp"
 #include "connection_manager.hpp"
+#include "mr.h"
+#include "devx.h"
 
 #define MIN_RNR_TIMER		(12)
 
@@ -39,6 +41,8 @@ void roce_init(NetParam &net_param, int num_contexts = 1);
 QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct PingPongInfo *info);
 
 void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongInfo *info, struct PingPongInfo *my_info);
+
+QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct PingPongInfo *info);
 
 void print_pingpong_info(struct PingPongInfo *info);
 

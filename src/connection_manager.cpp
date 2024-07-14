@@ -1,7 +1,7 @@
 #include <assert.h>
 #include "connection_manager.hpp"
 #include "util.hpp"
-
+#include "mr.h"
 void socket_init(NetParam &net_param) {
     if (net_param.sock_port == 0) {
         net_param.sock_port = 6666;
@@ -63,5 +63,19 @@ void exchange_data(NetParam &net_param, char *data, int size) {
     } else {
         dummy = write(net_param.sockfd[0], data, size);
         dummy = read(net_param.sockfd[0], data, size * net_param.numNodes);
+    }
+}
+
+void exchange_vhca_data(NetParam &net_param, vhca_resource *resources, size_t resources_number) {
+    LOG_D("exchange vhca data %ld resources", resources_number);
+
+    size_t dummy;
+    (void)dummy;
+    if (net_param.nodeId == 0) {
+        for (int i = 1;i < net_param.numNodes;i++) {
+            dummy = write(net_param.sockfd[i], resources, resources_number * sizeof(vhca_resource));
+        }
+    } else {
+        dummy = read(net_param.sockfd[0], resources, resources_number * sizeof(vhca_resource));
     }
 }
