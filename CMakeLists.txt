@@ -47,6 +47,8 @@ set(HEAD_FILES
 
 include_directories("${CMAKE_SOURCE_DIR}/include")
 
+include_directories("${CMAKE_SOURCE_DIR}/include/bench")
+
 include_directories("${CMAKE_SOURCE_DIR}/include/devx")
 
 include_directories("${CMAKE_SOURCE_DIR}/include/fw")
@@ -54,10 +56,12 @@ include_directories("${CMAKE_SOURCE_DIR}/include/fw")
 #sub-project: HdrHistogram
 include_directories(${CMAKE_SOURCE_DIR}/HdrHistogram_c/include)
 
+set(LIBRARIES ${LIBRARIES} ibverbs pthread numa gflags hdr_histogram_static mlx5)
+
 option(HDR_HISTOGRAM_BUILD_PROGRAMS OFF)
 add_subdirectory(${CMAKE_SOURCE_DIR}/HdrHistogram_c)
 
-
+add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_vhca)
 # add_executable(demo ${SRCS} demo.cpp)
 
 add_executable(libr_test ${SRCS} libr_test.cpp)
@@ -66,19 +70,10 @@ add_executable(rdma_bench ${SRCS} rdma_bench.cpp)
 
 add_executable(rdma_bench_duplex ${SRCS} rdma_bench_duplex.cpp)
 
-add_executable(rdma_vhca_bench ${SRCS} rdma_vhca_bench.cpp)
-
-add_executable(rdma_vhca_export ${SRCS} rdma_vhca_export.cpp)
-
-set(LIBRARIES ${LIBRARIES} ibverbs pthread numa gflags hdr_histogram_static mlx5)
-
 # target_link_libraries(demo ibverbs pthread numa)
 target_link_libraries(libr_test ${LIBRARIES})
 target_link_libraries(rdma_bench ${LIBRARIES})
 target_link_libraries(rdma_bench_duplex ${LIBRARIES})
-target_link_libraries(rdma_vhca_bench ${LIBRARIES})
-target_link_libraries(rdma_vhca_export ${LIBRARIES})
-
 
 add_library(r SHARED ${SRCS})
 target_link_libraries(r ibverbs pthread numa hdr_histogram_static)
