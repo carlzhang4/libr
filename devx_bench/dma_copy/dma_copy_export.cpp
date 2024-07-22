@@ -1,16 +1,5 @@
-#include <iostream>
-#include <thread>
-#include <mutex>
-#include <cstdio>
-#include <stdio.h>
-#include <time.h>
-#include <atomic>
-#include <gflags/gflags.h>
-#include <queue> 
-#include <fstream>
-#include <hdr/hdr_histogram.h>
+#include "dma_copy.h"
 
-#include "libr.hpp"
 using namespace std;
 std::mutex IO_LOCK;
 
@@ -18,22 +7,17 @@ int BUF_SIZE;
 int NUM_THREADS;
 int NUMA_NODE;
 string DEVICE_NAME;
-bool USE_IBV_REG_MR;
-
-std::atomic<bool> stop_flag = false;
-
-void ctrl_c_handler(int) { stop_flag = true; }
 
 
-DEFINE_int32(bufSize, 1073741824, "bufSize");
+DEFINE_int32(bufSize, 104857600, "bufSize");
 DEFINE_int32(threads, 1, "num_threads");
 DEFINE_int32(numaNode, 0, "numaNode");
 DEFINE_string(deviceName, "mlx5_0", "deviceName");
-DEFINE_bool(useIbvRegMr, false, "useIbvRegMr");
 DEFINE_int32(port, 6666, "bind_port");
+DEFINE_int32(life_time, 20, "time(s) to live");
 
 
-
+// sudo ./dma_copy_export -numaNode 0 -deviceName mlx5_0 -bufSize 104857600 -threads 1 -life_time 30
 int main(int argc, char *argv[]) {
     signal(SIGINT, ctrl_c_handler);
     signal(SIGTERM, ctrl_c_handler);
@@ -44,7 +28,6 @@ int main(int argc, char *argv[]) {
     NUM_THREADS = FLAGS_threads;
     NUMA_NODE = FLAGS_numaNode;
     DEVICE_NAME = FLAGS_deviceName;
-    USE_IBV_REG_MR = FLAGS_useIbvRegMr;
 
     NetParam net_param;
     net_param.numNodes = 2;
@@ -77,7 +60,6 @@ int main(int argc, char *argv[]) {
     printf("cross_gvmi_mkey_enabled %d\n", caps.cross_gvmi_mkey_enabled);
     printf("---------------------------\n");
 
-
     vhca_resource *resources = new vhca_resource[NUM_THREADS];
 
     for (int i = 0;i < NUM_THREADS;i++) {
@@ -98,35 +80,28 @@ int main(int argc, char *argv[]) {
             return -1;
         }
         resources[i].size = BUF_SIZE;
-        if (!USE_IBV_REG_MR) {
-            resources[i].mr = devx_reg_mr(resources[i].pd, resources[i].addr, resources[i].size, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
-            if (!resources[i].mr) {
-                LOG_I("can't devx_reg_mr\n");
-                return -1;
-            }
-        } else {
-            LOG_E("TODO not support yet, please go to devx repo to learn!");
+        resources[i].mr = devx_reg_mr(resources[i].pd, resources[i].addr, resources[i].size, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ
+            | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_HUGETLB | IBV_ACCESS_RELAXED_ORDERING);
+        if (!resources[i].mr) {
+            LOG_I("can't devx_reg_mr\n");
             return -1;
         }
-
         resources[i].mkey = devx_mr_query_mkey(resources[i].mr);
-        if (!USE_IBV_REG_MR) {
-            if (devx_mr_allow_other_vhca_access(resources[i].mr, access_key, sizeof(access_key)) != 0) {
-                LOG_E("can't allow_other_vhca_access\n");
-                return -1;
-            }
-            LOG_I("mr (umem): thread %d vhca_id %u addr %p mkey %u\n", i, caps.vhca_id, resources[i].addr, resources[i].mkey);
-        } else {
-            LOG_E("TODO not support yet, please go to devx repo to learn!");
+        if (devx_mr_allow_other_vhca_access(resources[i].mr, access_key, sizeof(access_key)) != 0) {
+            LOG_E("can't allow_other_vhca_access\n");
             return -1;
         }
+        LOG_I("mr (umem): thread %d vhca_id %u addr %p mkey %u\n", i, caps.vhca_id, resources[i].addr, resources[i].mkey);
     }
 
     socket_init(net_param);
     exchange_vhca_data(net_param, resources, NUM_THREADS);
 
-    while (!stop_flag) {
-        usleep(10000);
+    for (int i = 0;i < FLAGS_life_time;i++) {
+        if (stop_flag) {
+            break;
+        }
+        sleep(1);
     }
 
     for (int i = 0;i < NUM_THREADS;i++) {

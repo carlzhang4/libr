@@ -181,7 +181,12 @@ static struct mlx5dv_devx_umem *devx_umem_reg(struct ibv_context *context, void 
     umem_in.addr = addr;
     umem_in.size = size;
     umem_in.access = access;
-    umem_in.pgsz_bitmap = PAGE_SIZE;
+    if (access & IBV_ACCESS_HUGETLB) {
+        umem_in.access ^= IBV_ACCESS_HUGETLB;
+        umem_in.pgsz_bitmap = 2 * 1024 * 1024;
+    } else {
+        umem_in.pgsz_bitmap = PAGE_SIZE;
+    }
     return  mlx5dv_devx_umem_reg_ex(context, &umem_in);
 }
 

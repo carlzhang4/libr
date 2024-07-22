@@ -62,6 +62,8 @@ option(HDR_HISTOGRAM_BUILD_PROGRAMS OFF)
 add_subdirectory(${CMAKE_SOURCE_DIR}/HdrHistogram_c)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_vhca)
+
+add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/dma_copy)
 # add_executable(demo ${SRCS} demo.cpp)
 
 add_executable(libr_test ${SRCS} libr_test.cpp)

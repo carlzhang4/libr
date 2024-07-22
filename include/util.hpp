@@ -36,6 +36,7 @@ public:
 	struct ibv_context **contexts;
 	int							num_contexts;
 	int 						batch_size;
+	bool use_devx_context;
 };
 
 struct PingPongInfo {

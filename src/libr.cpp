@@ -30,6 +30,19 @@ struct ibv_context *ctx_open_device(struct ibv_device *ib_dev) {
 	return context;
 }
 
+struct ibv_context *ctx_open_devx_device(struct ibv_device *ib_dev) {
+	struct mlx5dv_context_attr dv_attr = {};
+
+	dv_attr.flags |= MLX5DV_CONTEXT_FLAGS_DEVX;
+	struct ibv_context *context = mlx5dv_open_device(ib_dev, &dv_attr);
+
+	if (context == NULL) {
+		printf("failed to create context\n");
+		exit(__LINE__);
+	}
+	return context;
+}
+
 const char *transport_type_str(enum ibv_transport_type t) {
 	switch (t) {
 	case IBV_TRANSPORT_UNKNOWN: return "IBV_TRANSPORT_UNKNOWN";
@@ -134,7 +147,12 @@ void roce_init(NetParam &net_param, int num_contexts) {
 	ALLOCATE(net_param.contexts, struct ibv_context *, num_contexts);
 	struct ibv_device *ib_dev = ctx_find_dev(net_param.device_name.c_str());
 	for (int i = 0;i < num_contexts;i++) {
-		net_param.contexts[i] = ctx_open_device(ib_dev);
+		if (net_param.use_devx_context) {
+			net_param.contexts[i] = ctx_open_devx_device(ib_dev);
+			LOG_I("Use devx context %d\n", i);
+		} else {
+			net_param.contexts[i] = ctx_open_device(ib_dev);
+		}
 	}
 	struct ibv_context *context = net_param.contexts[0];
 
