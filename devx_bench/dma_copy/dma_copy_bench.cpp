@@ -15,6 +15,7 @@ int BATCH_SIZE;
 int NUMA_NODE;
 int BIND_OFFSET;
 string EXPORTER_IP;
+int QP_PER_THREAD;
 
 vhca_resource *resources = nullptr;
 
@@ -32,8 +33,9 @@ DEFINE_int32(bindOffset, 0, "bindOffset");
 DEFINE_int32(port, 6666, "bind_port");
 DEFINE_int32(life_time, 15, "time(s) to live");
 DEFINE_string(serverIp, "", "serverIp");
+DEFINE_int32(qpPerThread, 1, "qpPerThread");
 
-// sudo ./dma_copy_bench -numaNode 0 -deviceName mlx5_2 -gidIndex 1  -payload 1024 -batchSize 64 -threads 1 -serverIp 10.0.0.100 -life_time 15
+// sudo ./dma_copy_bench -numaNode 0 -deviceName mlx5_2 -gidIndex 1  -payload 1024 -batchSize 64 -threads 1 -serverIp 10.0.0.100 -life_time 15 -qpPerThread 1
 
 ibv_qp *create_dma_qp(struct ibv_context *ibv_ctx,
     struct ibv_pd *pd, struct ibv_cq *rq_cq, struct ibv_cq *sq_cq) {
@@ -85,9 +87,9 @@ ibv_qp *create_dma_qp(struct ibv_context *ibv_ctx,
     return qp;
 }
 
-ibv_cq *create_dma_cq(ibv_context *ibv_ctx) {
+ibv_cq *create_dma_cq(ibv_context *ibv_ctx, int depth_scale) {
     struct ibv_cq_init_attr_ex cq_attr = {
-    .cqe = QP_DEPTH,
+    .cqe = QP_DEPTH * depth_scale,
     .cq_context = NULL,
     .channel = NULL,
     .comp_vector = 0
@@ -185,32 +187,42 @@ uint32_t get_mmo_dma_max_length(struct ibv_context *ibv_ctx) {
 void dma_copy_bench_routine(uint64_t thread_id, bench_runner *runner, bench_stat *stat, void *args) {
     vhca_resource *resource = reinterpret_cast<vhca_resource *>(args) + thread_id;
 
-    void *local_buffer = malloc_2m_numa(PAYLOAD * BATCH_SIZE, NUMA_NODE);
+    void *local_buffer = malloc_2m_numa(PAYLOAD * BATCH_SIZE * QP_PER_THREAD, NUMA_NODE);
     rt_assert(local_buffer);
 
-    ibv_mr *local_mr = ibv_reg_mr(resource->pd, local_buffer, PAYLOAD * BATCH_SIZE, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ
+    ibv_mr *local_mr = ibv_reg_mr(resource->pd, local_buffer, PAYLOAD * BATCH_SIZE * QP_PER_THREAD, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ
         | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_HUGETLB | IBV_ACCESS_RELAXED_ORDERING);
     if (!local_mr) {
         LOG_E("can't create local_mr\n");
         exit(__LINE__);
     }
 
-    ibv_cq *sq_cq = create_dma_cq(resource->pd->context);
-    ibv_cq *rq_cq = create_dma_cq(resource->pd->context);
+    ibv_cq *sq_cq = create_dma_cq(resource->pd->context, QP_PER_THREAD);
+    ibv_cq *rq_cq = create_dma_cq(resource->pd->context, QP_PER_THREAD);
 
-    ibv_qp *dma_qp = create_dma_qp(resource->pd->context, resource->pd, rq_cq, sq_cq);
+    std::vector<ibv_qp *> dma_qp_list;
+    std::vector<ibv_qp_ex *> dma_qpx_list;
+    std::vector<mlx5dv_qp_ex *> dma_mqpx_list;
+    std::vector<uint64_t> dma_start_index_list;
+    std::vector<uint64_t> dma_finish_index_list;
 
-    // TODO init qp
-    init_dma_qp(dma_qp);
+    for (int i = 0;i < QP_PER_THREAD; i++) {
+        ibv_qp *dma_qp = create_dma_qp(resource->pd->context, resource->pd, rq_cq, sq_cq);
+        init_dma_qp(dma_qp);
+        dma_qp_self_connected(dma_qp);
+        ibv_qp_ex *dma_qpx = ibv_qp_to_qp_ex(dma_qp);
+        mlx5dv_qp_ex *dma_mqpx = mlx5dv_qp_ex_from_ibv_qp_ex(dma_qpx);
 
-    dma_qp_self_connected(dma_qp);
-
-    ibv_qp_ex *dma_qpx = ibv_qp_to_qp_ex(dma_qp);
-    mlx5dv_qp_ex *dma_mqpx = mlx5dv_qp_ex_from_ibv_qp_ex(dma_qpx);
+        dma_qp_list.push_back(dma_qp);
+        dma_qpx_list.push_back(dma_qpx);
+        dma_mqpx_list.push_back(dma_mqpx);
+        dma_start_index_list.push_back(0);
+        dma_finish_index_list.push_back(0);
+    }
 
     uint32_t local_mr_mkey = local_mr->lkey;
     uint32_t remote_mr_mkey = devx_mr_query_mkey(resource->mr);
-
+    uint64_t per_qp_offset = PAYLOAD * BATCH_SIZE;
     ibv_wc *wc = new ibv_wc[16];
 
     while (!start_flag) {};
@@ -218,64 +230,74 @@ void dma_copy_bench_routine(uint64_t thread_id, bench_runner *runner, bench_stat
     Timer now_timer;
     now_timer.tic();
 
-    uint64_t dma_start_index = 0, dma_finish_index = 0;
-    for (;dma_start_index < static_cast<uint64_t>(BATCH_SIZE);dma_start_index++) {
-        size_t remote_offset = dma_start_index * PAYLOAD;
-        size_t local_offset = dma_start_index * PAYLOAD;
-        ibv_wr_start(dma_qpx);
-        dma_qpx->wr_id = dma_start_index;
-        dma_qpx->wr_flags = IBV_SEND_SIGNALED;
-        if (IS_READ) {
-            mlx5dv_wr_memcpy(dma_mqpx, local_mr_mkey, (uint64_t)local_buffer + local_offset, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, PAYLOAD);
-        } else {
-            mlx5dv_wr_memcpy(dma_mqpx, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, local_mr_mkey, (uint64_t)local_buffer + local_offset, PAYLOAD);
-        }
 
-        if (ibv_wr_complete(dma_qpx)) {
-            LOG_E("failed to exe memcpy\n");
-            exit(__LINE__);
+    for (uint64_t now_index = 0; now_index < static_cast<uint64_t>(BATCH_SIZE);now_index++) {
+        for (uint64_t qp_index = 0;qp_index < static_cast<uint64_t>(QP_PER_THREAD); qp_index++) {
+            size_t remote_offset = now_index * PAYLOAD + per_qp_offset * qp_index;
+            size_t local_offset = now_index * PAYLOAD + per_qp_offset * qp_index;
+            ibv_wr_start(dma_qpx_list[qp_index]);
+            dma_qpx_list[qp_index]->wr_id = dma_start_index_list[qp_index] | (qp_index << 32);
+            dma_qpx_list[qp_index]->wr_flags = IBV_SEND_SIGNALED;
+            if (IS_READ) {
+                mlx5dv_wr_memcpy(dma_mqpx_list[qp_index], local_mr_mkey, (uint64_t)local_buffer + local_offset, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, PAYLOAD);
+            } else {
+                mlx5dv_wr_memcpy(dma_mqpx_list[qp_index], remote_mr_mkey, (uint64_t)resource->addr + remote_offset, local_mr_mkey, (uint64_t)local_buffer + local_offset, PAYLOAD);
+            }
+            if (ibv_wr_complete(dma_qpx_list[qp_index])) {
+                LOG_E("failed to exe memcpy\n");
+                exit(__LINE__);
+            }
+            dma_start_index_list[qp_index]++;
         }
     }
 
     while (runner->running()) {
         uint32_t num_wc = ibv_poll_cq(sq_cq, 16, wc);
         for (uint32_t i = 0;i < num_wc;i++) {
-            if (wc[i].status != IBV_WC_SUCCESS || wc[i].wr_id != dma_finish_index) {
-                LOG_E("wc status %d, want %ld, get %ld\n", wc[i].status, dma_finish_index, wc[i].wr_id);
+            uint64_t qp_index = wc[i].wr_id >> 32;
+            if (wc[i].status != IBV_WC_SUCCESS || (wc[i].wr_id & 0xffffffff) != dma_finish_index_list[qp_index]) {
+                LOG_E("wc status %d, want %ld, get %ld\n", wc[i].status, dma_finish_index_list[qp_index], (wc[i].wr_id & 0xffffffff));
                 exit(__LINE__);
             }
-            dma_finish_index++;
+            dma_finish_index_list[qp_index]++;
 
-            size_t remote_offset = (dma_start_index % BATCH_SIZE) * PAYLOAD;
-            size_t local_offset = (dma_start_index % BATCH_SIZE) * PAYLOAD;
-            ibv_wr_start(dma_qpx);
-            dma_qpx->wr_id = dma_start_index;
-            dma_qpx->wr_flags = IBV_SEND_SIGNALED;
+            size_t remote_offset = (dma_start_index_list[qp_index] % BATCH_SIZE) * PAYLOAD + per_qp_offset * qp_index;
+            size_t local_offset = (dma_start_index_list[qp_index] % BATCH_SIZE) * PAYLOAD + per_qp_offset * qp_index;
+            ibv_wr_start(dma_qpx_list[qp_index]);
+            dma_qpx_list[qp_index]->wr_id = dma_start_index_list[qp_index] | (qp_index << 32);
+            dma_qpx_list[qp_index]->wr_flags = IBV_SEND_SIGNALED;
             if (IS_READ) {
-                mlx5dv_wr_memcpy(dma_mqpx, local_mr_mkey, (uint64_t)local_buffer + local_offset, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, PAYLOAD);
+                mlx5dv_wr_memcpy(dma_mqpx_list[qp_index], local_mr_mkey, (uint64_t)local_buffer + local_offset, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, PAYLOAD);
             } else {
-                mlx5dv_wr_memcpy(dma_mqpx, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, local_mr_mkey, (uint64_t)local_buffer + local_offset, PAYLOAD);
+                mlx5dv_wr_memcpy(dma_mqpx_list[qp_index], remote_mr_mkey, (uint64_t)resource->addr + remote_offset, local_mr_mkey, (uint64_t)local_buffer + local_offset, PAYLOAD);
             }
 
-            if (ibv_wr_complete(dma_qpx)) {
+            if (ibv_wr_complete(dma_qpx_list[qp_index])) {
                 LOG_E("failed to exe memcpy\n");
                 exit(__LINE__);
             }
-            dma_start_index++;
+            dma_start_index_list[qp_index]++;
         }
     }
 
-    while (dma_finish_index < dma_start_index) {
-        uint32_t num_wc = ibv_poll_cq(sq_cq, 16, wc);
-        for (uint32_t i = 0;i < num_wc;i++) {
-            if (wc[i].status != IBV_WC_SUCCESS || wc[i].wr_id != dma_finish_index) {
-                LOG_E("wc status %d, want %ld, get %ld\n", wc[i].status, dma_finish_index, wc[i].wr_id);
-                exit(__LINE__);
+    for (uint64_t qp_index = 0;qp_index < static_cast<uint64_t>(QP_PER_THREAD); qp_index++) {
+        if (dma_start_index_list[qp_index] == dma_finish_index_list[qp_index]) {
+            continue;
+        }
+        while (dma_finish_index_list[qp_index] < dma_start_index_list[qp_index]) {
+            uint32_t num_wc = ibv_poll_cq(sq_cq, 16, wc);
+            for (uint32_t i = 0;i < num_wc;i++) {
+                if (wc[i].status != IBV_WC_SUCCESS) {
+                    LOG_E("wc status %d", wc[i].status);
+                    exit(__LINE__);
+                }
+                dma_finish_index_list[wc[i].wr_id >> 32]++;
             }
-            dma_finish_index++;
         }
     }
-    double dma_mops = dma_start_index * 1.0 / now_timer.toc();
+
+
+    double dma_mops = accumulate(dma_start_index_list.begin(), dma_start_index_list.end(), 0) * 1.0 / now_timer.toc();
 
     std::lock_guard<std::mutex> guard(IO_LOCK);
 
@@ -284,7 +306,9 @@ void dma_copy_bench_routine(uint64_t thread_id, bench_runner *runner, bench_stat
 
     delete[]wc;
 
-    ibv_destroy_qp(dma_qp);
+    for (auto dma_qp : dma_qp_list) {
+        ibv_destroy_qp(dma_qp);
+    }
     ibv_destroy_cq(sq_cq);
     ibv_destroy_cq(rq_cq);
     ibv_dereg_mr(local_mr);
@@ -307,6 +331,7 @@ int main(int argc, char *argv[]) {
     NUMA_NODE = FLAGS_numaNode;
     BIND_OFFSET = FLAGS_bindOffset;
     EXPORTER_IP = FLAGS_serverIp;
+    QP_PER_THREAD = FLAGS_qpPerThread;
 
     NetParam net_param;
     net_param.numNodes = 2;
@@ -332,8 +357,8 @@ int main(int argc, char *argv[]) {
     LOG_I("mmo_dma_max_length %u\n", mmo_dma_max_length);
     rt_assert(mmo_dma_max_length >= static_cast<uint32_t>(PAYLOAD));
 
-    rt_assert(QP_DEPTH >= BATCH_SIZE);
-
+    rt_assert(QP_DEPTH >= static_cast<uint32_t>(BATCH_SIZE));
+    rt_assert(1ul * BATCH_SIZE * PAYLOAD * QP_PER_THREAD <= resources[0].size);
     uint8_t access_key[32] = { 0 };
     for (int i = 0; i < 32;i++) {
         access_key[i] = 1;
@@ -352,12 +377,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // TODO bench_runner
-
     auto runner = bench_runner(NUM_THREADS, BIND_OFFSET, NUMA_NODE);
 
     runner.run(dma_copy_bench_routine, resources);
-    usleep(10000);
+    usleep(100000);
 
     start_flag = true;
     for (int i = 0; i < FLAGS_life_time && stop_flag == false; i++) {
