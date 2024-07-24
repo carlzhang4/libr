@@ -213,6 +213,9 @@ void dma_copy_bench_routine(uint64_t thread_id, bench_runner *runner, bench_stat
         ibv_qp_ex *dma_qpx = ibv_qp_to_qp_ex(dma_qp);
         mlx5dv_qp_ex *dma_mqpx = mlx5dv_qp_ex_from_ibv_qp_ex(dma_qpx);
 
+        // important for init before do memcpy
+        dma_mqpx->wr_memcpy_direct_init(dma_mqpx);
+
         dma_qp_list.push_back(dma_qp);
         dma_qpx_list.push_back(dma_qpx);
         dma_mqpx_list.push_back(dma_mqpx);
@@ -235,17 +238,12 @@ void dma_copy_bench_routine(uint64_t thread_id, bench_runner *runner, bench_stat
         for (uint64_t qp_index = 0;qp_index < static_cast<uint64_t>(QP_PER_THREAD); qp_index++) {
             size_t remote_offset = now_index * PAYLOAD + per_qp_offset * qp_index;
             size_t local_offset = now_index * PAYLOAD + per_qp_offset * qp_index;
-            ibv_wr_start(dma_qpx_list[qp_index]);
             dma_qpx_list[qp_index]->wr_id = dma_start_index_list[qp_index] | (qp_index << 32);
             dma_qpx_list[qp_index]->wr_flags = IBV_SEND_SIGNALED;
             if (IS_READ) {
-                mlx5dv_wr_memcpy(dma_mqpx_list[qp_index], local_mr_mkey, (uint64_t)local_buffer + local_offset, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, PAYLOAD);
+                dma_mqpx_list[qp_index]->wr_memcpy_direct(dma_mqpx_list[qp_index], local_mr_mkey, (uint64_t)local_buffer + local_offset, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, PAYLOAD);
             } else {
-                mlx5dv_wr_memcpy(dma_mqpx_list[qp_index], remote_mr_mkey, (uint64_t)resource->addr + remote_offset, local_mr_mkey, (uint64_t)local_buffer + local_offset, PAYLOAD);
-            }
-            if (ibv_wr_complete(dma_qpx_list[qp_index])) {
-                LOG_E("failed to exe memcpy\n");
-                exit(__LINE__);
+                dma_mqpx_list[qp_index]->wr_memcpy_direct(dma_mqpx_list[qp_index], remote_mr_mkey, (uint64_t)resource->addr + remote_offset, local_mr_mkey, (uint64_t)local_buffer + local_offset, PAYLOAD);
             }
             dma_start_index_list[qp_index]++;
         }
@@ -263,18 +261,12 @@ void dma_copy_bench_routine(uint64_t thread_id, bench_runner *runner, bench_stat
 
             size_t remote_offset = (dma_start_index_list[qp_index] % BATCH_SIZE) * PAYLOAD + per_qp_offset * qp_index;
             size_t local_offset = (dma_start_index_list[qp_index] % BATCH_SIZE) * PAYLOAD + per_qp_offset * qp_index;
-            ibv_wr_start(dma_qpx_list[qp_index]);
             dma_qpx_list[qp_index]->wr_id = dma_start_index_list[qp_index] | (qp_index << 32);
             dma_qpx_list[qp_index]->wr_flags = IBV_SEND_SIGNALED;
             if (IS_READ) {
-                mlx5dv_wr_memcpy(dma_mqpx_list[qp_index], local_mr_mkey, (uint64_t)local_buffer + local_offset, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, PAYLOAD);
+                dma_mqpx_list[qp_index]->wr_memcpy_direct(dma_mqpx_list[qp_index], local_mr_mkey, (uint64_t)local_buffer + local_offset, remote_mr_mkey, (uint64_t)resource->addr + remote_offset, PAYLOAD);
             } else {
-                mlx5dv_wr_memcpy(dma_mqpx_list[qp_index], remote_mr_mkey, (uint64_t)resource->addr + remote_offset, local_mr_mkey, (uint64_t)local_buffer + local_offset, PAYLOAD);
-            }
-
-            if (ibv_wr_complete(dma_qpx_list[qp_index])) {
-                LOG_E("failed to exe memcpy\n");
-                exit(__LINE__);
+                dma_mqpx_list[qp_index]->wr_memcpy_direct(dma_mqpx_list[qp_index], remote_mr_mkey, (uint64_t)resource->addr + remote_offset, local_mr_mkey, (uint64_t)local_buffer + local_offset, PAYLOAD);
             }
             dma_start_index_list[qp_index]++;
         }
