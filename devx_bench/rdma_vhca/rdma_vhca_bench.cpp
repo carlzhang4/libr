@@ -181,8 +181,6 @@ void benchmark(NetParam &net_param) {
     }
 
     vector<thread> threads(NUM_THREADS);
-    struct timespec start_timer, end_timer;
-    clock_gettime(CLOCK_MONOTONIC, &start_timer);
     for (int i = 0;i < NUM_THREADS;i++) {
         int now_index = get_cpu_index_with_numa(i + CORE_OFFSET, net_param.numa_node);
         if (net_param.nodeId == 0) {
@@ -195,7 +193,6 @@ void benchmark(NetParam &net_param) {
     for (int i = 0;i < NUM_THREADS;i++) {
         threads[i].join();
     }
-    clock_gettime(CLOCK_MONOTONIC, &end_timer);
 
     for (int i = 0;i < NUM_THREADS;i++) {
         free(qp_handlers[i]->send_sge_list);
