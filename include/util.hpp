@@ -36,6 +36,7 @@ public:
 	struct ibv_context **contexts;
 	int							num_contexts;
 	int 						batch_size;
+	int 						sge_per_wr;
 	bool use_devx_context;
 };
 
@@ -68,6 +69,7 @@ public:
 	unsigned int remote_rkey;
 	int max_inline_size;
 	int num_wrs;
+	int num_sges_per_wr;
 	int num_sges;
 	int tx_depth;
 	int rx_depth;

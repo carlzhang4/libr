@@ -187,7 +187,8 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	uint32_t max_inline_size = 0;
 
 	int num_wrs = net_param.batch_size != 0 ? net_param.batch_size : 1;
-	int num_sges = num_wrs * 1;
+	int num_sges_per_wr = net_param.sge_per_wr != 0 ? net_param.sge_per_wr : 1;
+	int num_sges = num_wrs * num_sges_per_wr;
 	struct ibv_sge *send_sge_list;
 	struct ibv_sge *recv_sge_list;
 	struct ibv_send_wr *send_wr;
@@ -273,6 +274,7 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	qp_handler->send_wr = send_wr;
 	qp_handler->recv_wr = recv_wr;
 	qp_handler->num_sges = num_sges;
+	qp_handler->num_sges_per_wr = num_sges_per_wr;
 	qp_handler->num_wrs = num_wrs;
 	qp_handler->tx_depth = tx_depth;
 	qp_handler->rx_depth = rx_depth;
@@ -293,7 +295,8 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 	uint32_t max_inline_size = 0;
 
 	int num_wrs = net_param.batch_size != 0 ? net_param.batch_size : 1;
-	int num_sges = num_wrs * 1;
+	int num_sges_per_wr = net_param.sge_per_wr != 0 ? net_param.sge_per_wr : 1;
+	int num_sges = num_wrs * num_sges_per_wr;
 	struct ibv_sge *send_sge_list;
 	struct ibv_sge *recv_sge_list;
 	struct ibv_send_wr *send_wr;
@@ -386,6 +389,7 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 	qp_handler->send_wr = send_wr;
 	qp_handler->recv_wr = recv_wr;
 	qp_handler->num_sges = num_sges;
+	qp_handler->num_sges_per_wr = num_sges_per_wr;
 	qp_handler->num_wrs = num_wrs;
 	qp_handler->tx_depth = tx_depth;
 	qp_handler->rx_depth = rx_depth;
@@ -397,7 +401,7 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 
 void init_wr_base_send_recv(QpHandler &qp_handler) {
 	//send
-	assert(qp_handler.num_wrs == qp_handler.num_sges);
+	assert(qp_handler.num_wrs * qp_handler.num_sges_per_wr == qp_handler.num_sges);
 	memset(qp_handler.send_wr, 0, sizeof(struct ibv_send_wr) * qp_handler.num_wrs);
 	ibv_send_wr *send_wr = qp_handler.send_wr;
 	ibv_sge *send_sge_list = qp_handler.send_sge_list;
@@ -405,8 +409,8 @@ void init_wr_base_send_recv(QpHandler &qp_handler) {
 	for (int i = 0;i < qp_handler.num_wrs;i++) {
 		send_sge_list[i].addr = qp_handler.buf;
 		send_sge_list[i].lkey = qp_handler.mr->lkey;
-		send_wr[i].sg_list = send_sge_list + i;
-		send_wr[i].num_sge = 1;
+		send_wr[i].sg_list = send_sge_list + i * qp_handler.num_sges_per_wr;
+		send_wr[i].num_sge = qp_handler.num_sges_per_wr;
 		send_wr[i].wr_id = 1000;//todo
 		send_wr[i].next = NULL;
 		send_wr[i].send_flags = IBV_SEND_SIGNALED;
@@ -424,8 +428,8 @@ void init_wr_base_send_recv(QpHandler &qp_handler) {
 	for (int i = 0;i < qp_handler.num_wrs;i++) {
 		recv_sge_list[i].addr = qp_handler.buf;
 		recv_sge_list[i].lkey = qp_handler.mr->lkey;
-		recv_wr[i].sg_list = recv_sge_list + i;
-		recv_wr[i].num_sge = 1;
+		recv_wr[i].sg_list = recv_sge_list + i * qp_handler.num_sges_per_wr;
+		recv_wr[i].num_sge = qp_handler.num_sges_per_wr;
 		recv_wr[i].wr_id = 1001;//todo
 		recv_wr[i].next = NULL;//todo
 		if (i > 0) {
@@ -437,7 +441,7 @@ void init_wr_base_send_recv(QpHandler &qp_handler) {
 
 void init_wr_base_write(QpHandler &qp_handler) {
 	//write
-	assert(qp_handler.num_wrs == qp_handler.num_sges);
+	assert(qp_handler.num_wrs * qp_handler.num_sges_per_wr == qp_handler.num_sges);
 	memset(qp_handler.send_wr, 0, sizeof(struct ibv_send_wr) * qp_handler.num_wrs);
 	ibv_send_wr *send_wr = qp_handler.send_wr;
 	ibv_sge *send_sge_list = qp_handler.send_sge_list;
@@ -448,8 +452,8 @@ void init_wr_base_write(QpHandler &qp_handler) {
 		send_wr[i].wr.rdma.remote_addr = qp_handler.remote_buf;
 		send_wr[i].wr.rdma.rkey = qp_handler.remote_rkey;
 
-		send_wr[i].sg_list = send_sge_list + i;
-		send_wr[i].num_sge = 1;
+		send_wr[i].sg_list = send_sge_list + i * qp_handler.num_sges_per_wr;
+		send_wr[i].num_sge = qp_handler.num_sges_per_wr;
 		send_wr[i].wr_id = 0;//todo
 		send_wr[i].next = NULL;
 		send_wr[i].send_flags = IBV_SEND_SIGNALED;
