@@ -56,7 +56,7 @@ void sub_task_server(int thread_index, QpHandler *handler, vhca_resource *resour
 
     for (size_t i = 0; i < min(size_t(rx_depth), ops);i++) {
         handler->recv_sge_list[0].addr = recv.index_mod() * HEADER_SIZE + local_mr_addr;
-        handler->recv_sge_list[0].length = HEADER_SIZE * 2;
+        handler->recv_sge_list[0].length = HEADER_SIZE;
         handler->recv_sge_list[0].lkey = local_rkey;
 
         handler->recv_sge_list[1].addr = recv.index_mod() * PACK_SIZE + host_mr_addr;

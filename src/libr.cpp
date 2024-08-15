@@ -192,7 +192,9 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	struct ibv_sge *send_sge_list;
 	struct ibv_sge *recv_sge_list;
 	struct ibv_send_wr *send_wr;
+	struct ibv_send_wr *send_bar_wr;
 	struct ibv_recv_wr *recv_wr;
+	struct ibv_recv_wr *recv_bar_wr;
 
 	struct ibv_pd *pd;
 	struct ibv_mr *mr;
@@ -207,7 +209,9 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	ALLOCATE(send_sge_list, struct ibv_sge, num_sges);
 	ALLOCATE(recv_sge_list, struct ibv_sge, num_sges);
 	ALLOCATE(send_wr, struct ibv_send_wr, num_wrs);
+	ALLOCATE(send_bar_wr, struct ibv_send_wr, 1);
 	ALLOCATE(recv_wr, struct ibv_recv_wr, num_wrs);
+	ALLOCATE(recv_bar_wr, struct ibv_recv_wr, 1);
 
 	//check valid mem
 	assert(size > static_cast<size_t>(net_param.page_size));
@@ -272,7 +276,9 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	qp_handler->send_sge_list = send_sge_list;
 	qp_handler->recv_sge_list = recv_sge_list;
 	qp_handler->send_wr = send_wr;
+	qp_handler->send_bar_wr = send_bar_wr;
 	qp_handler->recv_wr = recv_wr;
+	qp_handler->recv_bar_wr = recv_bar_wr;
 	qp_handler->num_sges = num_sges;
 	qp_handler->num_sges_per_wr = num_sges_per_wr;
 	qp_handler->num_wrs = num_wrs;
@@ -300,7 +306,9 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 	struct ibv_sge *send_sge_list;
 	struct ibv_sge *recv_sge_list;
 	struct ibv_send_wr *send_wr;
+	struct ibv_send_wr *send_bar_wr;
 	struct ibv_recv_wr *recv_wr;
+	struct ibv_recv_wr *recv_bar_wr;
 
 	struct ibv_pd *pd;
 	struct ibv_mr *mr;
@@ -315,7 +323,9 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 	ALLOCATE(send_sge_list, struct ibv_sge, num_sges);
 	ALLOCATE(recv_sge_list, struct ibv_sge, num_sges);
 	ALLOCATE(send_wr, struct ibv_send_wr, num_wrs);
+	ALLOCATE(send_bar_wr, struct ibv_send_wr, 1);
 	ALLOCATE(recv_wr, struct ibv_recv_wr, num_wrs);
+	ALLOCATE(recv_bar_wr, struct ibv_recv_wr, 1);
 
 	//check valid mem
 	assert(resource->size > static_cast<size_t>(net_param.page_size));
@@ -387,7 +397,9 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 	qp_handler->send_sge_list = send_sge_list;
 	qp_handler->recv_sge_list = recv_sge_list;
 	qp_handler->send_wr = send_wr;
+	qp_handler->send_bar_wr = send_bar_wr;
 	qp_handler->recv_wr = recv_wr;
+	qp_handler->recv_bar_wr = recv_bar_wr;
 	qp_handler->num_sges = num_sges;
 	qp_handler->num_sges_per_wr = num_sges_per_wr;
 	qp_handler->num_wrs = num_wrs;
