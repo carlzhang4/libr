@@ -250,6 +250,8 @@ void benchmark(NetParam &net_param) {
         free(qp_handlers[i]->recv_sge_list);
         free(qp_handlers[i]->send_wr);
         free(qp_handlers[i]->recv_wr);
+        free(qp_handlers[i]->send_bar_wr);
+        free(qp_handlers[i]->recv_bar_wr);
 
         ibv_destroy_qp(qp_handlers[i]->qp);
         ibv_dereg_mr(qp_handlers[i]->mr);
