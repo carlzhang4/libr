@@ -230,9 +230,9 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	attr.recv_cq = recv_cq;
 	attr.cap.max_inline_data = max_inline_size;
 	attr.cap.max_send_wr = tx_depth;
-	attr.cap.max_send_sge = num_sges;
+	attr.cap.max_send_sge = num_sges_per_wr;
 	attr.cap.max_recv_wr = rx_depth;
-	attr.cap.max_recv_sge = num_sges;
+	attr.cap.max_recv_sge = num_sges_per_wr;
 	attr.qp_type = IBV_QPT_RC;
 	qp = ibv_create_qp(pd, &attr);
 	if (qp == NULL && errno == ENOMEM) {
@@ -351,9 +351,9 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 	attr.recv_cq = recv_cq;
 	attr.cap.max_inline_data = max_inline_size;
 	attr.cap.max_send_wr = tx_depth;
-	attr.cap.max_send_sge = num_sges;
+	attr.cap.max_send_sge = num_sges_per_wr;
 	attr.cap.max_recv_wr = rx_depth;
-	attr.cap.max_recv_sge = num_sges;
+	attr.cap.max_recv_sge = num_sges_per_wr;
 	attr.qp_type = IBV_QPT_RC;
 	qp = ibv_create_qp(pd, &attr);
 	if (qp == NULL && errno == ENOMEM) {
