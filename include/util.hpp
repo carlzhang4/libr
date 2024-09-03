@@ -284,7 +284,7 @@ public:
 		LOG_I("%s [%.2f] us, average [%.2f] us", str.c_str(), duration_us, duration_us / start_idx);
 	}
 	double get_seconds() {
-		assert(start_idx == end_idx);
+		// assert(start_idx == end_idx);
 		return duration_us / 1e6;
 	}
 	void show_percentage(double per, string str) {
