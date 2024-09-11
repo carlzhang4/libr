@@ -21,6 +21,8 @@ int NUMA_NODE;
 string DEVICE_NAME;
 int FLOW_UDP_DST_PORT;
 int CORE_OFFSET;
+int PKT_SIZE;
+bool IS_SERVER;
 
 std::atomic<bool> stop_flag = false;
 
@@ -30,8 +32,9 @@ static uint8_t RSS_KEY[40] = { 0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
                               0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
                               0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa };
 
-// static uint8_t MY_MAC_ADDR[6] = { 0x02, 0xc3, 0x7c, 0x0f,0x71 ,0xb9 };
-static uint8_t MY_MAC_ADDR[6] = { 0xa0, 0x88, 0xc2, 0x32, 0x04, 0x30 };
+// static uint8_t SERVER_MAC_ADDR[6] = { 0x02, 0xc3, 0x7c, 0x0f,0x71 ,0xb9 };
+static uint8_t CLIENT_MAC_ADDR[6] = { 0xa0, 0x88, 0xc2, 0x31, 0xf7, 0xde };
+static uint8_t SERVER_MAC_ADDR[6] = { 0xa0, 0x88, 0xc2, 0x32, 0x04, 0x30 };
 void ctrl_c_handler(int) { stop_flag = true; }
 
 DEFINE_int32(threads, 1, "num_threads");
@@ -39,11 +42,14 @@ DEFINE_int32(numaNode, 0, "numaNode");
 DEFINE_string(deviceName, "mlx5_0", "deviceName");
 DEFINE_int32(flow_udp_dst_port, 6666, "bind flow to udp dst port");
 DEFINE_int32(coreOffset, 0, "coreOffset");
+DEFINE_int32(pktSize, 1024, "packet size");
+DEFINE_bool(server, true, "server mode");
 
 static uint32_t NB_RXD = 1024;
 static uint32_t NB_TXD = 1024;
 static uint32_t PKT_BUF_SIZE = 2048;
 static uint32_t HANDLE_BATCH = 32;
+static uint32_t SEND_OUTSTANDING = 512;
 
 class WqHandler {
 public:
@@ -218,7 +224,6 @@ QpHandler *create_qp_raw_packet(NetParam &net_param, ibv_pd *pd, ibv_rwq_ind_tab
 void sub_recv_server(int thread_index, WqHandler *handler) {
     wait_scheduling(thread_index, IO_LOCK);
     TimeUtil global_timer;
-
     struct ibv_wc *wc_recv = NULL, *wc_send = NULL;
     ALLOCATE(wc_recv, struct ibv_wc, CTX_POLL_BATCH);
     ALLOCATE(wc_send, struct ibv_wc, CTX_POLL_BATCH);
@@ -323,10 +328,139 @@ void sub_recv_server(int thread_index, WqHandler *handler) {
         double speed_pps = recv_comp.index() / duration / 1e6;
 
         std::lock_guard<std::mutex> lock(IO_LOCK);
-        LOG_I("Data verification success, thread [%d], duration [%f]s, PPS [%f] Mops", thread_index, duration, speed_pps);
+        LOG_I("thread [%d], duration [%f]s, PPS [%f] Mops", thread_index, duration, speed_pps);
     }
     free(wc_recv);
     free(wc_send);
+}
+
+void sub_send_server(int thread_index, WqHandler *handler) {
+    wait_scheduling(thread_index, IO_LOCK);
+    TimeUtil global_timer;
+    struct ibv_wc *wc_recv = NULL, *wc_send = NULL;
+    ALLOCATE(wc_recv, struct ibv_wc, CTX_POLL_BATCH);
+    ALLOCATE(wc_send, struct ibv_wc, CTX_POLL_BATCH);
+
+    size_t local_mr_addr = reinterpret_cast<size_t>(handler->buf);
+    size_t local_rkey = handler->mr->lkey;
+
+    OffsetHandler send(NB_TXD, PKT_BUF_SIZE, 0);
+    OffsetHandler send_comp(NB_TXD, PKT_BUF_SIZE, 0);
+    OffsetHandler recv(NB_RXD, PKT_BUF_SIZE, NB_TXD * PKT_BUF_SIZE);
+    OffsetHandler recv_comp(NB_RXD, PKT_BUF_SIZE, NB_TXD * PKT_BUF_SIZE);
+
+    size_t rx_depth = handler->rx_depth;
+    size_t tx_depth = handler->tx_depth;
+
+    // initial recv wqe
+    for (size_t i = 0;i < rx_depth; i++) {
+        handler->recv_sge_list[0].addr = recv.offset() + local_mr_addr;
+        handler->recv_sge_list[0].length = PKT_BUF_SIZE;
+        handler->recv_sge_list[0].lkey = local_rkey;
+        handler->recv_wr->num_sge = 1;
+        handler->recv_wr->sg_list = handler->recv_sge_list;
+        handler->recv_wr->wr_id = recv.offset() + local_mr_addr;
+        handler->recv_wr->next = nullptr;
+
+        assert(ibv_post_wq_recv(handler->recv_wq, handler->recv_wr, &handler->recv_bar_wr) == 0);
+        recv.step();
+    }
+    for (int i = 0;i < handler->num_wrs;i++) {
+        handler->recv_sge_list[i].lkey = local_rkey;
+        handler->recv_wr[i].sg_list = handler->recv_sge_list + i;
+        handler->recv_wr[i].num_sge = 1;
+        if (i != 0) {
+            handler->recv_wr[i - 1].next = handler->recv_wr + i;
+        }
+        handler->recv_wr[i].next = nullptr;
+    }
+
+    // initial send wqe
+    for (int i = 0;i < handler->num_wrs;i++) {
+        handler->send_sge_list[i].lkey = local_rkey;
+        handler->send_wr[i].sg_list = handler->send_sge_list + i;
+        handler->send_wr[i].num_sge = 1;
+        if (i != 0) {
+            handler->send_wr[i - 1].next = handler->send_wr + i;
+        }
+        handler->send_wr[i].next = nullptr;
+        handler->send_wr[i].send_flags = IBV_SEND_IP_CSUM;
+        handler->send_wr[i].opcode = IBV_WR_SEND;
+    }
+
+
+    for (size_t i = 0;i < tx_depth;i++) {
+        udp_packet *now_pkt = reinterpret_cast<udp_packet *>(local_mr_addr + PKT_BUF_SIZE * i);
+        now_pkt->eth_hdr.ether_type = htons(0x0800);
+        for (size_t j = 0;j < 6;j++) {
+            now_pkt->eth_hdr.dst_addr.addr_bytes[j] = SERVER_MAC_ADDR[j];
+            now_pkt->eth_hdr.src_addr.addr_bytes[j] = CLIENT_MAC_ADDR[j];
+        }
+
+        now_pkt->ip_hdr.version_ihl = 0x45;
+        now_pkt->ip_hdr.type_of_service = 0;
+        now_pkt->ip_hdr.total_length = htons(PKT_SIZE - sizeof(ether_hdr));
+        now_pkt->ip_hdr.packet_id = htons(0);
+        now_pkt->ip_hdr.fragment_offset = htons(0);
+        now_pkt->ip_hdr.time_to_live = 64;
+        now_pkt->ip_hdr.next_proto_id = 17;
+        now_pkt->ip_hdr.src_addr = htonl(i);
+        now_pkt->ip_hdr.dst_addr = htonl(i);
+
+        now_pkt->udp_hdr.dgram_len = htons(PKT_SIZE - sizeof(ether_hdr) - sizeof(ipv4_hdr));
+        now_pkt->udp_hdr.src_port = htons(i);
+        now_pkt->udp_hdr.dst_port = htons(FLOW_UDP_DST_PORT);
+    }
+
+    global_timer.start_once();
+    while (!stop_flag) {
+        if ((send.index() - recv_comp.index()) < (SEND_OUTSTANDING - HANDLE_BATCH)) {
+            for (size_t i = 0;i < HANDLE_BATCH;i++) {
+                handler->send_sge_list[i].addr = send.offset() + local_mr_addr;
+                handler->send_sge_list[i].length = PKT_SIZE;
+                handler->send_wr[i].wr_id = send.index();
+                if (i == HANDLE_BATCH - 1) {
+                    handler->send_wr[i].next = nullptr;
+                    handler->send_wr[i].send_flags = IBV_SEND_SIGNALED;
+                }
+                send.step();
+            }
+            assert(ibv_post_send(handler->send_qp, handler->send_wr, &handler->send_bar_wr) == 0);
+        }
+
+        int ne_send = ibv_poll_cq(handler->send_cq, CTX_POLL_BATCH, wc_send);
+        for (int i = 0;i < ne_send;i++) {
+            assert(wc_send[i].status == IBV_WC_SUCCESS);
+            send_comp.step(HANDLE_BATCH);
+        }
+
+        int ne_recv = ibv_poll_cq(handler->recv_cq, CTX_POLL_BATCH, wc_recv);
+        for (int i = 0;i < ne_recv;i++) {
+            assert(wc_recv[i].status == IBV_WC_SUCCESS);
+
+            uint32_t now_recv_index = recv_comp.index() % HANDLE_BATCH;
+
+            handler->recv_sge_list[now_recv_index].addr = recv.offset() + local_mr_addr;
+            handler->recv_sge_list[now_recv_index].length = PKT_BUF_SIZE;
+            handler->recv_wr[now_recv_index].wr_id = recv.offset() + local_mr_addr;
+            recv_comp.step();
+            recv.step();
+            if (now_recv_index == HANDLE_BATCH - 1) {
+                handler->recv_wr[now_recv_index].next = nullptr;
+                assert(ibv_post_wq_recv(handler->recv_wq, handler->recv_wr, &handler->recv_bar_wr) == 0);
+            }
+        }
+    }
+    global_timer.end();
+    double duration = global_timer.get_seconds();
+    double send_speed_pps = send_comp.index() / duration / 1e6;
+    double recv_speed_pps = recv_comp.index() / duration / 1e6;
+    std::lock_guard<std::mutex> lock(IO_LOCK);
+    LOG_I("thread [%d], duration [%f]s, send/recv PPS [%f,%f] Mops", thread_index, duration, send_speed_pps, recv_speed_pps);
+
+    free(wc_recv);
+    free(wc_send);
+
 }
 
 void benchmark(NetParam &net_param) {
@@ -387,7 +521,11 @@ void benchmark(NetParam &net_param) {
     flow_spec_eth->size = sizeof(ibv_flow_spec_eth);
     flow_spec_eth->val.ether_type = htons(0x0800);
     flow_spec_eth->mask.ether_type = 0xffff;
-    memcpy(flow_spec_eth->val.dst_mac, MY_MAC_ADDR, 6);
+    if (IS_SERVER) {
+        memcpy(flow_spec_eth->val.dst_mac, SERVER_MAC_ADDR, 6);
+    } else {
+        memcpy(flow_spec_eth->val.dst_mac, CLIENT_MAC_ADDR, 6);
+    }
     memset(flow_spec_eth->mask.dst_mac, 0xFF, 6);
 
     flow_spec_udp->type = IBV_FLOW_SPEC_UDP;
@@ -402,7 +540,11 @@ void benchmark(NetParam &net_param) {
     vector<thread> threads(NUM_THREADS);
     for (int i = 0;i < NUM_THREADS;i++) {
         int now_index = get_cpu_index_with_numa(i + CORE_OFFSET, net_param.numa_node);
-        threads[i] = thread(sub_recv_server, now_index, wq_handlers[i]);
+        if (IS_SERVER) {
+            threads[i] = thread(sub_recv_server, now_index, wq_handlers[i]);
+        } else {
+            threads[i] = thread(sub_send_server, now_index, wq_handlers[i]);
+        }
         set_cpu_with_numa(threads[i], i + CORE_OFFSET, net_param.numa_node);
     }
 
@@ -452,6 +594,12 @@ int main(int argc, char *argv[]) {
     DEVICE_NAME = FLAGS_deviceName;
     FLOW_UDP_DST_PORT = FLAGS_flow_udp_dst_port;
     CORE_OFFSET = FLAGS_coreOffset;
+    PKT_SIZE = FLAGS_pktSize;
+    IS_SERVER = FLAGS_server;
+    if (PKT_SIZE < 64 || static_cast<uint32_t>(PKT_SIZE) > PKT_BUF_SIZE) {
+        LOG_E("pkt size must be in [64, %u]", PKT_BUF_SIZE);
+        return -1;
+    }
 
     if ((NUM_THREADS & (NUM_THREADS - 1)) != 0) {
         LOG_E("NUM_THREADS must be power of 2");

@@ -192,8 +192,8 @@ std::string string_format(const std::string &format, Args... args) {
 
 #ifdef DEBUG
 #define LOG_D(format, ...) \
-{char buf[100];\
-snprintf(buf,100,"[DEBUG][%s][%s:%d][%s]",time_string(), __FILENAME__,  __LINE__, __FUNCTION__ );\
+{char buf[150];\
+snprintf(buf,150,"[DEBUG][%s][%s:%d][%s]",time_string(), __FILENAME__,  __LINE__, __FUNCTION__ );\
 printf("%-100s" format "\n",buf, ##__VA_ARGS__);}
 #else
 #define LOG_D(format, ...)
@@ -201,8 +201,8 @@ printf("%-100s" format "\n",buf, ##__VA_ARGS__);}
 
 #ifdef INFO
 #define LOG_I(format, ...)  \
-{char buf[100];\
-snprintf(buf,100,"[INFO][%s][%s:%d][%s]",time_string(), __FILENAME__,  __LINE__, __FUNCTION__ );\
+{char buf[150];\
+snprintf(buf,150,"[INFO][%s][%s:%d][%s]",time_string(), __FILENAME__,  __LINE__, __FUNCTION__ );\
 printf("%-100s" format "\n",buf, ##__VA_ARGS__);}
 #else
 #define LOG_I(format, ...)
@@ -341,4 +341,43 @@ public:
 		return cur % max_num;
 	}
 };
+
+struct ether_addr {
+	uint8_t addr_bytes[6];
+};
+
+struct ether_hdr {
+	struct ether_addr dst_addr;
+	struct ether_addr src_addr;
+	uint16_t ether_type;
+} __attribute__((__packed__));
+
+struct ipv4_hdr {
+	uint8_t version_ihl;
+	uint8_t type_of_service;
+	uint16_t total_length;
+	uint16_t packet_id;
+	uint16_t fragment_offset;
+	uint8_t time_to_live;
+	uint8_t next_proto_id;
+	uint16_t hdr_checksum;
+	uint32_t src_addr;
+	uint32_t dst_addr;
+} __attribute__((__packed__));
+
+struct udp_hdr {
+	uint16_t src_port;
+	uint16_t dst_port;
+	uint16_t dgram_len;
+	uint16_t dgram_cksum;
+} __attribute__((__packed__));
+
+
+struct udp_packet {
+	struct ether_hdr eth_hdr;
+	struct ipv4_hdr ip_hdr;
+	struct udp_hdr udp_hdr;
+	// no data element entry
+} __attribute__((__packed__));
+
 #endif
