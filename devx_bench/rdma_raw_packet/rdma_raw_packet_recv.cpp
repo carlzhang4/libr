@@ -301,10 +301,7 @@ void sub_recv_server(int thread_index, WqHandler *handler) {
 
         int ne_send = ibv_poll_cq(handler->send_cq, CTX_POLL_BATCH, wc_send);
         for (int i = 0;i < ne_send;i++) {
-            if (wc_send[i].status != IBV_WC_SUCCESS) {
-                LOG_E("send error %d", wc_send[i].status);
-                exit(1);
-            };
+            assert(wc_send[i].status == IBV_WC_SUCCESS);
             int now_send_begin = send_comp.index();
             int now_send_end = wc_send[i].wr_id;
             for (int j = now_send_begin;j <= now_send_end;j++) {
