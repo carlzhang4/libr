@@ -182,7 +182,7 @@ std::string string_format(const std::string &format, Args... args) {
 
 
 #define ALLOCATE(var,type,size)                                     \
-{ if((var = static_cast<type*>(malloc(sizeof(type)*(size)))) == NULL)        \
+{ if((var = static_cast<type*>(calloc(size,sizeof(type)))) == NULL)        \
 	{ fprintf(stderr," Cannot Allocate\n"); exit(1);}}
 
 #define DEBUG
