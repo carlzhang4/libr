@@ -68,6 +68,8 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/dma_copy)
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_split_send)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_raw_packet)
+
+add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_raw_packet_tso)
 # add_executable(demo ${SRCS} demo.cpp)
 
 add_executable(libr_test ${SRCS} libr_test.cpp)
