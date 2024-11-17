@@ -1,8 +1,8 @@
 #include "rpcacc_micro.h"
 #include "bench.h"
 
-#define BENCH0
-#include "serdes_main.h"
+#define BENCH5
+#include "serdes_noencode_main.h"
 
 using namespace std;
 std::mutex IO_LOCK;
@@ -245,49 +245,62 @@ void dma_copy_bench_routine(uint64_t thread_id, bench_runner *runner, bench_stat
     now_timer.tic();
 
 
-    dma_func = std::bind(dma_mqpx_list[0]->wr_memcpy_direct, dma_mqpx_list[0], remote_mr_mkey, std::placeholders::_1, local_mr_mkey, std::placeholders::_2, std::placeholders::_3);
+    dma_func = std::bind(dma_mqpx_list[0]->wr_memcpy_direct, dma_mqpx_list[0], local_mr_mkey, std::placeholders::_1, remote_mr_mkey, std::placeholders::_2, std::placeholders::_3);
+
+    wait_cq_func = [&](size_t num_ops) -> void {
+        size_t finish_ops = 0;
+        while (finish_ops < num_ops) {
+            uint32_t num_wc = ibv_poll_cq(sq_cq, 16, wc);
+            for (uint32_t wc_idx = 0;wc_idx < num_wc;wc_idx++) {
+                if (wc[wc_idx].status != IBV_WC_SUCCESS) {
+                    LOG_E("idx %u wc status %d\n", wc_idx, wc[wc_idx].status);
+                    exit(__LINE__);
+                }
+            }
+            finish_ops += num_wc;
+        }
+        };
+
     dma_qpx_list[0]->wr_flags = IBV_SEND_SIGNALED;
 
-    size_t target_loop = 10000;
+    size_t target_loop = 1000;
     size_t target_message = 10;
     size_t total_tsc = 0;
+    size_t memcpy_tsc = 0;
     std::vector<std::vector<size_t>>decoding_cycles(target_message);
     std::vector<std::vector<size_t>>total_cycles(target_message);
 
     for (size_t msg_idx = 0;msg_idx < target_message;msg_idx++) {
         M_base *top_msg_ptr = BenchmarkInit(msg_idx, metadataVec, messageSizeVec);
-        InitMetadata(top_msg_ptr, messageSizeVec);
-        size_t total_size = 0;
-
-        SerializeToString(top_msg_ptr, (string *)result, false, total_size, messageSizeVec);
-        size_t total_bytes = ByteSizeLong(top_msg_ptr, false);
-        string result_str = string(result, 64 * 1024 * 1024);
-
+        size_t total_size = ByteSizeLong(top_msg_ptr, false);
         for (size_t loop_idx = 0;loop_idx < target_loop; loop_idx++) {
             dma_inner_now_offset = 0;
             dma_ops = 0;
-            decoding_tsc = 0;
-
             // init cache
             for (size_t i = 0;i < 200 * 1024 * 1024;i++) {
                 tmp_buffer[i] = 'a';
             }
 
             total_tsc = get_tsc();
-            ParseFromString(result_str, top_msg_ptr, top_msg_ptr->get_metadata_ptr()->class_id, metadataVec, messageSizeVec);
-#ifndef DMA_EACH_TIME
+
+            SerializeToString(top_msg_ptr, (string *)result, false, messageSizeVec);
+
+#ifndef ENCODE_EACH_TIME
+            memcpy_tsc = get_tsc();
+            memcpy(tmp_buffer, result, total_size);
+            memcpy_tsc = get_tsc() - memcpy_tsc;
+            size_t total_bytes = total_size;
             while (total_bytes > 2097152) {
-                dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, 2097152);
+                dma_func(dma_inner_local_buffer + dma_inner_now_offset, dma_inner_remote_buffer + dma_inner_now_offset, 2097152);
                 dma_inner_now_offset += 2097152;
                 dma_ops++;
                 total_bytes -= 2097152;
             }
-            dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, total_bytes);
+            dma_func(dma_inner_local_buffer + dma_inner_now_offset, dma_inner_remote_buffer + dma_inner_now_offset, total_bytes);
             dma_inner_now_offset += round_up(total_bytes, 64);
             dma_ops++;
-#endif
-            size_t now_finish_dma = 0;
 
+            size_t now_finish_dma = 0;
             while (now_finish_dma < dma_ops) {
                 uint32_t num_wc = ibv_poll_cq(sq_cq, 16, wc);
                 for (uint32_t wc_idx = 0;wc_idx < num_wc;wc_idx++) {
@@ -298,10 +311,12 @@ void dma_copy_bench_routine(uint64_t thread_id, bench_runner *runner, bench_stat
                 }
                 now_finish_dma += num_wc;
             }
+#endif
             total_tsc = get_tsc() - total_tsc;
 
-            decoding_cycles[msg_idx].push_back(decoding_tsc);
+            decoding_cycles[msg_idx].push_back(memcpy_tsc);
             total_cycles[msg_idx].push_back(total_tsc);
+
         }
         printf("finish msg %ld\n", msg_idx);
     }
@@ -315,7 +330,7 @@ void dma_copy_bench_routine(uint64_t thread_id, bench_runner *runner, bench_stat
             decoding_sum += decoding_cycles[msg_idx][loop_idx];
             total_sum += total_cycles[msg_idx][loop_idx];
         }
-        printf("msg_idx %ld decoding_sum %.4f total_sum %.4f\n", msg_idx, decoding_sum * 1.0 / 1000 / target_loop / get_tsc_freq_per_ns(), total_sum * 1.0 / 1000 / target_loop / get_tsc_freq_per_ns());
+        printf("%.4f %.4f\n", decoding_sum * 1.0 / 1000 / target_loop / get_tsc_freq_per_ns(), total_sum * 1.0 / 1000 / target_loop / get_tsc_freq_per_ns());
     }
 
 

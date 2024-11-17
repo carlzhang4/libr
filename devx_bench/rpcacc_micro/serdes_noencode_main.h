@@ -1,10 +1,7 @@
 #pragma once
 #include <bits/stdc++.h>
 
-#include "encode.h"
-
-#define TAG_SIZE ((current_metadata.field_id[i] < 16) ? 1 : 2)
-#define TAG_SIZE_PLUS_2 TAG_SIZE + 2
+#include "no_encode.h"
 
 #ifdef BENCH0
 #include "bench_header/bench0_testclass.h"
@@ -48,6 +45,9 @@
 #ifdef MICROBENCH_64INT
 #include "bench_header/64int_microbench_testclass.h"
 #endif
+
+#define TAG_SIZE 4
+#define TAG_SIZE_PLUS_2 TAG_SIZE + 2
 
 void InitMessageSizeVec(size_t *messageSizeVec) {
     for (int i = 0; i < 1000; ++i) {
@@ -160,7 +160,7 @@ size_t ByteSizeLong(M_base *message, bool skip_long_string_flag = false) {
             bool *ptr_to_bool = reinterpret_cast<bool *>(obj_addr);
             bool &current_field = *ptr_to_bool;
             obj_addr = ptr_to_bool + 8;
-            current_field_size = TAG_SIZE_PLUS_2 + 1;
+            current_field_size = TAG_SIZE_PLUS_2 + 4;
             output_size += current_field_size;
         }
         break;
@@ -171,7 +171,7 @@ size_t ByteSizeLong(M_base *message, bool skip_long_string_flag = false) {
             obj_addr = ptr_to_bool_vector + 1;
             current_field_size = 0;
             for (int j = 0; j < current_field.size(); ++j) {
-                current_field_size += 1;
+                current_field_size += 4;
             }
             current_field_size += TAG_SIZE_PLUS_2 + VarintSize32(static_cast<uint32_t>(current_field_size));
             output_size += current_field_size;
@@ -357,6 +357,7 @@ size_t ByteSizeLong(M_base *message, bool skip_long_string_flag = false) {
     }
     return output_size;
 }
+
 
 uint8_t *SerializeToString_DFS(M_base *message, uint8_t *current_buffer_addr, bool skip_long_string_flag, size_t *messageSizeVec) {
     uint16_t current_field_size = 0;
@@ -668,7 +669,7 @@ uint8_t *SerializeToString_DFS(M_base *message, uint8_t *current_buffer_addr, bo
                 current_field_size = 0;
             } else {
                 current_buffer_addr = WriteLengthToArray(current_field_size, current_buffer_addr);
-                current_buffer_addr = WriteRepeatedStringToArray(current_field_id, current_field, current_buffer_addr);
+                current_buffer_addr = WriteRepeatedBytesToArray(current_field_id, current_field, current_buffer_addr);
             }
         }
         break;

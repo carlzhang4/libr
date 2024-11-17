@@ -12,7 +12,7 @@ size_t dma_inner_now_offset = 0;
 size_t dma_ops = 0;
 size_t decoding_tsc = 0;
 
-// #define DMA_EACH_TIME
+// #define DECODE_EACH_TIME
 
 inline int32_t ZigZagDecode32(uint32_t n) {
   // Note:  Using unsigned types prevent undefined behavior
@@ -105,7 +105,7 @@ inline uint64_t ReadVarint64(const char **p) {
   *p = VarintParse(*p, &tmp);
   decoding_tsc += get_tsc() - now_tsc;
 
-#ifdef DMA_EACH_TIME
+#ifdef DECODE_EACH_TIME
   dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, sizeof(uint64_t));
   dma_inner_now_offset += round_up(sizeof(uint64_t), 64);
   dma_ops++;
@@ -119,7 +119,7 @@ inline uint16_t ReadFieldLength(const char **p) {
   memcpy(&res, *p, sizeof(uint16_t));
   *p += sizeof(uint16_t);
 
-#ifdef DMA_EACH_TIME
+#ifdef DECODE_EACH_TIME
   dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, sizeof(uint16_t));
   dma_inner_now_offset += round_up(sizeof(uint16_t), 64);
   dma_ops++;
@@ -133,7 +133,7 @@ inline uint32_t ReadFixed32(const char **p) {
   memcpy(&res, *p, sizeof(uint32_t));
   *p += sizeof(uint32_t);
 
-#ifdef DMA_EACH_TIME
+#ifdef DECODE_EACH_TIME
   dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, sizeof(uint32_t));
   dma_inner_now_offset += round_up(sizeof(uint32_t), 64);
   dma_ops++;
@@ -147,7 +147,7 @@ inline uint64_t ReadFixed64(const char **p) {
   memcpy(&res, *p, sizeof(uint64_t));
   *p += sizeof(uint64_t);
 
-#ifdef DMA_EACH_TIME
+#ifdef DECODE_EACH_TIME
   dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, sizeof(uint64_t));
   dma_inner_now_offset += round_up(sizeof(uint64_t), 64);
   dma_ops++;
@@ -161,7 +161,7 @@ inline double ReadDouble(const char **p) {
   memcpy(&res, *p, sizeof(double));
   *p += sizeof(double);
 
-#ifdef DMA_EACH_TIME
+#ifdef DECODE_EACH_TIME
   dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, sizeof(double));
   dma_inner_now_offset += round_up(sizeof(double), 64);
   dma_ops++;
@@ -175,7 +175,7 @@ inline float ReadFloat(const char **p) {
   memcpy(&res, *p, sizeof(float));
   *p += sizeof(float);
 
-#ifdef DMA_EACH_TIME
+#ifdef DECODE_EACH_TIME
   dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, sizeof(float));
   dma_inner_now_offset += round_up(sizeof(float), 64);
   dma_ops++;
@@ -190,7 +190,7 @@ inline uint32_t ReadVarint32(const char **p) {
   *p = VarintParse<uint32_t>(*p, &tmp);
   decoding_tsc += get_tsc() - now_tsc;
 
-#ifdef DMA_EACH_TIME
+#ifdef DECODE_EACH_TIME
   dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, sizeof(uint32_t));
   dma_inner_now_offset += round_up(sizeof(uint32_t), 64);
   dma_ops++;
@@ -205,7 +205,7 @@ inline int32_t ReadVarintZigZag32(const char **p) {
   *p = VarintParse(*p, &tmp);
   decoding_tsc += get_tsc() - now_tsc;
 
-#ifdef DMA_EACH_TIME
+#ifdef DECODE_EACH_TIME
   dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, sizeof(uint32_t));
   dma_inner_now_offset += round_up(sizeof(uint32_t), 64);
   dma_ops++;
@@ -219,7 +219,7 @@ const char *ReadString(const char *ptr, int size,
   std::string *s) {
   s->assign(ptr, size);
 
-#ifdef DMA_EACH_TIME
+#ifdef DECODE_EACH_TIME
   while (size > 2097152) {
     dma_func(dma_inner_remote_buffer + dma_inner_now_offset, dma_inner_local_buffer + dma_inner_now_offset, 2097152);
     dma_inner_now_offset += 2097152;
