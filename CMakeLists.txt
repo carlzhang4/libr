@@ -4,7 +4,7 @@ project(libr)
 
 # add_compile_options(-g -o3 -fcoroutines -std=c++20 -static)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -64,6 +64,8 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/HdrHistogram_c)
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_vhca)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/dma_copy)
+
+add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rpcacc_micro)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_split_send)
 
