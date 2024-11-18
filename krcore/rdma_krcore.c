@@ -17,6 +17,7 @@
 //  Define the module metadata.
 #define MODULE_NAME "krcore"
 #define  DEVICE_NAME "krcore"
+
 MODULE_AUTHOR("cxz66666");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION("A module to simulate KRCore kernel module");
@@ -63,11 +64,13 @@ struct krcore_info {
     struct ib_sge *recv_sge_list;
     struct ib_send_wr *send_wr;
     struct ib_recv_wr *recv_wr;
-    struct ib_send_wr *send_bar_wr;
-    struct ib_recv_wr *recv_bar_wr;
+    struct ib_wc *send_wc;
+    struct ib_wc *recv_wc;
+
     size_t original_buf;
     struct scatterlist sg;
     unsigned int sg_offset;
+    size_t user_local_buf;
     size_t local_buf;
     size_t remote_buf;
     unsigned int remote_rkey;
@@ -93,7 +96,6 @@ static struct file_operations fops =
 
 int krcore_add_device(struct ib_device *dev) {
     struct ib_port_attr port_attr;
-
     if (strcmp(dev->name, "mlx5_0") == 0) {
         global_device = dev;
         pr_info("%s: device added\n", dev->name);
@@ -252,7 +254,7 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
         return -ENOMEM;
     }
     info->local_buf = info->original_buf + info->sg_offset;
-
+    info->user_local_buf = params.user_buf;
 
     info->send_cq = ib_create_cq(global_device, NULL, NULL, NULL, &send_cq_attr);
     info->recv_cq = ib_create_cq(global_device, NULL, NULL, NULL, &recv_cq_attr);
@@ -291,14 +293,14 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     params.info.rkey = info->mr->rkey;
     params.info.out_reads = 1;
     params.info.vaddr = info->local_buf;
-    memcpy(params.info.gid.raw, temp_gid.raw, 16);
+    memcpy(params.info.raw_gid, temp_gid.raw, 16);
 
     info->send_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * KRCORE_NUM_WRS, GFP_KERNEL);
     info->recv_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * KRCORE_NUM_WRS, GFP_KERNEL);
     info->send_wr = kmalloc(sizeof(struct ib_send_wr) * KRCORE_NUM_WRS, GFP_KERNEL);
     info->recv_wr = kmalloc(sizeof(struct ib_recv_wr) * KRCORE_NUM_WRS, GFP_KERNEL);
-    info->send_bar_wr = kmalloc(sizeof(struct ib_send_wr), GFP_KERNEL);
-    info->recv_bar_wr = kmalloc(sizeof(struct ib_recv_wr), GFP_KERNEL);
+    info->send_wc = kmalloc(sizeof(struct ib_wc) * KRCORE_CQ_POLL_BATCH, GFP_KERNEL);
+    info->recv_wc = kmalloc(sizeof(struct ib_wc) * KRCORE_CQ_POLL_BATCH, GFP_KERNEL);
     info->num_sges = KRCORE_NUM_SGES_PER_WR * KRCORE_NUM_WRS;
     info->num_sges_per_wr = KRCORE_NUM_SGES_PER_WR;
     info->num_wrs = KRCORE_NUM_WRS;
@@ -311,6 +313,39 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     }
 
     return ret;
+}
+static void krcore_init_wr_base_send_recv(krcore_info_t *info) {
+    struct ib_send_wr *send_wr = info->send_wr;
+    struct ib_recv_wr *recv_wr = info->recv_wr;
+    struct ib_sge *send_sge_list = info->send_sge_list, *recv_sge_list = info->recv_sge_list;
+    int index = 0;
+    memset(send_wr, 0, sizeof(struct ib_send_wr) * info->num_wrs);
+    memset(recv_wr, 0, sizeof(struct ib_recv_wr) * info->num_wrs);
+
+    for (;index < info->num_wrs;index++) {
+        send_sge_list[index].addr = info->local_buf;
+        send_sge_list[index].lkey = info->mr->lkey;
+
+        send_wr[index].sg_list = send_sge_list + index * info->num_sges_per_wr;
+        send_wr[index].num_sge = info->num_sges_per_wr;
+        send_wr[index].wr_id = 1000;
+        send_wr[index].next = NULL;
+        send_wr[index].send_flags = IB_SEND_SIGNALED;
+        send_wr[index].opcode = IB_WR_SEND;
+        if (index > 0) {
+            send_wr[index - 1].next = send_wr + index;
+        }
+
+        recv_sge_list[index].addr = info->local_buf;
+        recv_sge_list[index].lkey = info->mr->lkey;
+        recv_wr[index].sg_list = recv_sge_list + index * info->num_sges_per_wr;
+        recv_wr[index].num_sge = info->num_sges_per_wr;
+        recv_wr[index].wr_id = 1001;
+        recv_wr[index].next = NULL;
+        if (index > 0) {
+            recv_wr[index - 1].next = recv_wr + index;
+        }
+    }
 }
 
 static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
@@ -328,7 +363,7 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
     attr.qp_state = IB_QPS_RTR;
     attr.ah_attr.port_num = 1;
     attr.ah_attr.sl = 0;//service level default 0
-    attr.ah_attr.grh.dgid = params.info.gid;
+    memcpy(attr.ah_attr.grh.dgid.raw, params.info.raw_gid, 16);
     attr.ah_attr.grh.sgid_index = KRCORE_RDMA_GID_INDEX;
     attr.ah_attr.grh.hop_limit = 0xFF;
     attr.ah_attr.grh.traffic_class = 0;
@@ -351,7 +386,7 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
     memset(&attr, 0, sizeof(attr));
     attr.qp_state = IB_QPS_RTS;
     flags |= IB_QP_SQ_PSN;
-    attr.sq_psn = info->qp->qp_num; // just a hack!
+    attr.sq_psn = info->qp->qp_num & 0xffffff; // just a hack!
 
     attr.timeout = KRCORE_DEF_QP_TIME;
     attr.retry_cnt = 7;
@@ -366,11 +401,160 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
     info->remote_buf = params.info.vaddr;
     info->remote_rkey = params.info.rkey;
 
+    krcore_init_wr_base_send_recv(info);
+
+    pr_info("%s: Connected success, local QPN:%#06x, remote QPN:%#08x\n", MODULE_NAME, info->qp->qp_num, params.info.qpn);
+
     if (copy_to_user(_params, &params, sizeof(params))) {
         pr_err("%s: failed to copy params to user\n", MODULE_NAME);
         return -EFAULT;
     }
 
+    return ret;
+}
+
+static int krcore_post_send(krcore_info_t *info, void __user *_params) {
+    int ret = 0;
+    struct KRCORE_IOC_POST_SEND_PARAMS params;
+    if (copy_from_user(&params, _params, sizeof(params))) {
+        pr_err("%s: failed to copy params from user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    // copy data!
+    if (copy_from_user((void *)(info->local_buf + params.offset), (void *)(info->user_local_buf + params.offset), params.length)) {
+        pr_err("%s: failed to copy data from user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    info->send_sge_list[0].addr = info->local_buf + params.offset;
+    info->send_sge_list[0].length = params.length;
+    info->send_wr->wr_id = params.offset;
+    info->send_wr->next = NULL;
+
+    if (ib_post_send(info->qp, info->send_wr, NULL)) {
+        pr_err("%s: failed to post send\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+
+    params.success_send_cnt = 1;
+    if (copy_to_user(_params, &params, sizeof(params))) {
+        pr_err("%s: failed to copy params to user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    return ret;
+}
+
+static int krcore_post_recv(krcore_info_t *info, void __user *_params) {
+    int ret = 0;
+    struct KRCORE_IOC_POST_RECV_PARAMS params;
+    if (copy_from_user(&params, _params, sizeof(params))) {
+        pr_err("%s: failed to copy params from user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    info->recv_sge_list[0].addr = info->local_buf + params.offset;
+    info->recv_sge_list[0].length = params.length;
+    info->recv_wr->wr_id = params.offset;
+    info->recv_wr->next = NULL;
+
+    if (ib_post_recv(info->qp, info->recv_wr, NULL)) {
+        pr_err("%s: failed to post recv\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+
+    params.success_post_cnt = 1;
+    if (copy_to_user(_params, &params, sizeof(params))) {
+        pr_err("%s: failed to copy params to user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    return ret;
+}
+
+static int krcore_poll_send_cq(krcore_info_t *info, void __user *_params) {
+    int ret = 0;
+    int index = 0;
+    int ne;
+    struct KRCORE_IOC_POLL_SEND_CQ_PARAMS params;
+    if (copy_from_user(&params, _params, sizeof(params))) {
+        pr_err("%s: failed to copy params from user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    ne = ib_poll_cq(info->send_cq, min(KRCORE_CQ_POLL_BATCH, params.max_poll_num), info->send_wc);
+    if (ne < 0) {
+        pr_err("%s: failed to poll send cq\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+    for (;index < ne;index++) {
+        if (info->send_wc[index].status != IB_WC_SUCCESS) {
+            pr_err("%s: send wc status is not success\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+    }
+    params.actual_poll_num = ne;
+    if (copy_to_user(_params, &params, sizeof(params))) {
+        pr_err("%s: failed to copy params to user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    return ret;
+}
+
+static int krcore_poll_recv_cq(krcore_info_t *info, void __user *_params) {
+    int ret = 0;
+    int index = 0;
+    int ne;
+    struct KRCORE_IOC_POLL_RECV_CQ_PARAMS params;
+    if (copy_from_user(&params, _params, sizeof(params))) {
+        pr_err("%s: failed to copy params from user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    ne = ib_poll_cq(info->recv_cq, min(KRCORE_CQ_POLL_BATCH, params.max_poll_num), info->recv_wc);
+    if (ne < 0) {
+        pr_err("%s: failed to poll recv cq\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+    for (;index < ne;index++) {
+        if (info->recv_wc[index].status != IB_WC_SUCCESS) {
+            pr_err("%s: recv wc status is not success\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+        // copy data!!
+        if (copy_to_user((void *)(info->user_local_buf + info->recv_wc[index].wr_id), (void *)(info->local_buf + info->recv_wc[index].wr_id), info->recv_wc[index].byte_len)) {
+            pr_err("%s: failed to copy data to user\n", MODULE_NAME);
+            return -EFAULT;
+        }
+    }
+    params.actual_poll_num = ne;
+    if (copy_to_user(_params, &params, sizeof(params))) {
+        pr_err("%s: failed to copy params to user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    return ret;
+}
+
+static int krcore_free_qp(krcore_info_t *info, void __user *_params) {
+    int ret = 0;
+    struct KRCORE_IOC_FREE_QP_PARAMS params;
+    if (copy_from_user(&params, _params, sizeof(params))) {
+        pr_err("%s: failed to copy params from user\n", MODULE_NAME);
+        return -EFAULT;
+    }
+    kfree((void *)info->original_buf);
+    kfree(info->send_sge_list);
+    kfree(info->recv_sge_list);
+    kfree(info->send_wr);
+    kfree(info->recv_wr);
+    kfree(info->send_wc);
+    kfree(info->recv_wc);
+
+    ib_destroy_qp(info->qp);
+    ib_dereg_mr(info->mr);
+    ib_destroy_cq(info->send_cq);
+    ib_destroy_cq(info->recv_cq);
+    ib_dealloc_pd(info->pd);
+
+    params.success = 1;
+    if (copy_to_user(_params, &params, sizeof(params))) {
+        pr_err("%s: failed to copy params to user\n", MODULE_NAME);
+        return -EFAULT;
+    }
     return ret;
 }
 
@@ -400,6 +584,21 @@ static long krcore_ioctl(struct inode *inode, struct file *filep, unsigned int c
         break;
     case KRCORE_IOC_INIT_QP:
         ret = krcore_init_qp(info, argp);
+        break;
+    case KRCORE_IOC_POST_SEND:
+        ret = krcore_post_send(info, argp);
+        break;
+    case KRCORE_IOC_POST_RECV:
+        ret = krcore_post_recv(info, argp);
+        break;
+    case KRCORE_IOC_POLL_SEND_CQ:
+        ret = krcore_poll_send_cq(info, argp);
+        break;
+    case KRCORE_IOC_POLL_RECV_CQ:
+        ret = krcore_poll_recv_cq(info, argp);
+        break;
+    case KRCORE_IOC_FREE_QP:
+        ret = krcore_free_qp(info, argp);
         break;
     default:
         pr_err("%s: invalid ioctl command %d\n", MODULE_NAME, cmd);
