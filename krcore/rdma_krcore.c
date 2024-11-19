@@ -68,7 +68,7 @@ struct krcore_info {
     struct ib_wc *recv_wc;
 
     size_t original_buf;
-    struct scatterlist sg;
+    struct scatterlist *sg;
     unsigned int sg_offset;
     size_t user_local_buf;
     size_t local_buf;
@@ -210,6 +210,10 @@ static int krcore_release(struct inode *inodep, struct file *filep) {
 
 static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     int ret = 0;
+    int index = 0;
+    unsigned long page_start;
+    struct page *now_page;
+
     struct ib_cq_init_attr send_cq_attr = {
         .cqe = KRCORE_TX_DEPTH,
         .comp_vector = 0,
@@ -237,19 +241,34 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
         pr_err("%s: failed to allocate pd\n", MODULE_NAME);
         return -ENOMEM;
     }
-    info->mr = ib_alloc_mr(info->pd, IB_MR_TYPE_MEM_REG, 1);
+    info->mr = ib_alloc_mr(info->pd, IB_MR_TYPE_MEM_REG, KRCORE_ALLOC_SIZE / PAGE_SIZE);
     if (!info->mr) {
         pr_err("%s: failed to allocate mr\n", MODULE_NAME);
         return -ENOMEM;
     }
-    info->original_buf = (size_t)kmalloc(KRCORE_ALLOC_SIZE, GFP_KERNEL);
+    info->original_buf = (size_t)vmalloc(KRCORE_ALLOC_SIZE);
     if (!info->original_buf) {
         pr_err("%s: failed to allocate original_buf\n", MODULE_NAME);
         return -ENOMEM;
     }
-    sg_init_one(&info->sg, (void *)info->original_buf, KRCORE_ALLOC_SIZE);
+    info->sg = kcalloc(KRCORE_ALLOC_SIZE / PAGE_SIZE, sizeof(struct scatterlist), GFP_KERNEL);
+    if (!info->sg) {
+        pr_err("%s: failed to allocate sg\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+    sg_init_table(info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE);
+    for (;index < KRCORE_ALLOC_SIZE / PAGE_SIZE;index++) {
+        page_start = (unsigned long)info->original_buf + (index * PAGE_SIZE);
+        now_page = vmalloc_to_page((void *)page_start);
+        if (!now_page) {
+            pr_err("%s: failed to get page\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+        sg_set_page(info->sg + index, now_page, PAGE_SIZE, 0);
+    }
+
     info->sg_offset = 0;
-    if (ib_map_mr_sg(info->mr, &info->sg, 1, &info->sg_offset, PAGE_SIZE) < 0) {
+    if (ib_map_mr_sg(info->mr, info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE, &info->sg_offset, PAGE_SIZE) < 0) {
         pr_err("%s: failed to map mr sg\n", MODULE_NAME);
         return -ENOMEM;
     }
@@ -279,8 +298,8 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     qp_attr.pkey_index = 0;
     qp_attr.port_num = 1;
     qp_attr.qp_access_flags = IB_ACCESS_REMOTE_WRITE | IB_ACCESS_LOCAL_WRITE;
-    if (ib_modify_qp(info->qp, &qp_attr, flags)) {
-        pr_err("%s: failed to modify qp\n", MODULE_NAME);
+    if ((ret = ib_modify_qp(info->qp, &qp_attr, flags))) {
+        pr_err("%s: failed to modify qp to init errno: %d\n", MODULE_NAME, ret);
         return -ENOMEM;
     }
 
@@ -306,6 +325,8 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     info->num_wrs = KRCORE_NUM_WRS;
     info->tx_depth = KRCORE_TX_DEPTH;
     info->rx_depth = KRCORE_RX_DEPTH;
+
+    pr_info("%s: Create success, local QPN:%#06x\n", MODULE_NAME, info->qp->qp_num);
 
     if (copy_to_user(_params, &params, sizeof(params))) {
         pr_err("%s: failed to copy params to user\n", MODULE_NAME);
@@ -362,13 +383,17 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
     memset(&attr, 0, sizeof(attr));
     attr.qp_state = IB_QPS_RTR;
     attr.ah_attr.port_num = 1;
+    attr.ah_attr.ah_flags = IB_AH_GRH; // important
     attr.ah_attr.sl = 0;//service level default 0
     memcpy(attr.ah_attr.grh.dgid.raw, params.info.raw_gid, 16);
     attr.ah_attr.grh.sgid_index = KRCORE_RDMA_GID_INDEX;
     attr.ah_attr.grh.hop_limit = 0xFF;
     attr.ah_attr.grh.traffic_class = 0;
     // TODO maybe need add rdma_ah_attr_type?
-    attr.path_mtu = current_mtu;
+    attr.ah_attr.type = RDMA_AH_ATTR_TYPE_ROCE;
+    memcpy(attr.ah_attr.roce.dmac, params.info.mac, 6);
+
+    attr.path_mtu = ilog2(current_mtu / 128);
     attr.dest_qp_num = params.info.qpn;
     attr.rq_psn = params.info.psn;
     flags |= (IB_QP_AV | IB_QP_PATH_MTU | IB_QP_DEST_QPN | IB_QP_RQ_PSN);
@@ -377,8 +402,8 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
     attr.min_rnr_timer = KRCORE_MIN_RNR_TIMER;
     flags |= (IB_QP_MIN_RNR_TIMER | IB_QP_MAX_DEST_RD_ATOMIC);
 
-    if (ib_modify_qp(info->qp, &attr, flags)) {
-        pr_err("%s: failed to modify qp\n", MODULE_NAME);
+    if ((ret = ib_modify_qp(info->qp, &attr, flags))) {
+        pr_err("%s: failed to modify qp to RTR errno: %d\n", MODULE_NAME, ret);
         return -ENOMEM;
     }
 
@@ -394,7 +419,7 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
     attr.max_rd_atomic = params.info.out_reads;
     flags |= (IB_QP_TIMEOUT | IB_QP_RETRY_CNT | IB_QP_RNR_RETRY | IB_QP_MAX_QP_RD_ATOMIC);
     if (ib_modify_qp(info->qp, &attr, flags)) {
-        pr_err("%s: failed to modify qp\n", MODULE_NAME);
+        pr_err("%s: failed to modify qp to RTS errno: %d\n", MODULE_NAME, ret);
         return -ENOMEM;
     }
 
@@ -536,19 +561,21 @@ static int krcore_free_qp(krcore_info_t *info, void __user *_params) {
         pr_err("%s: failed to copy params from user\n", MODULE_NAME);
         return -EFAULT;
     }
-    kfree((void *)info->original_buf);
     kfree(info->send_sge_list);
     kfree(info->recv_sge_list);
     kfree(info->send_wr);
     kfree(info->recv_wr);
     kfree(info->send_wc);
     kfree(info->recv_wc);
+    kfree(info->sg);
 
     ib_destroy_qp(info->qp);
     ib_dereg_mr(info->mr);
     ib_destroy_cq(info->send_cq);
     ib_destroy_cq(info->recv_cq);
     ib_dealloc_pd(info->pd);
+
+    vfree((void *)info->original_buf);
 
     params.success = 1;
     if (copy_to_user(_params, &params, sizeof(params))) {

@@ -11,6 +11,7 @@ struct PingPongInfo {
     unsigned rkey;
     unsigned long long vaddr;
     unsigned char	raw_gid[16];
+    unsigned char mac[6];
     int gid_index;
     int out_reads;
 };

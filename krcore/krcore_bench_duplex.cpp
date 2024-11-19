@@ -27,7 +27,8 @@ DEFINE_int32(port, 6666, "bind_port");
 
 int OUTSTANDING = 48;
 std::atomic<bool> stop_flag = false;
-
+unsigned char client_mac[6] = { 0x98,0x03,0x9b,0xca,0x48,0x38 };
+unsigned char server_mac[6] = { 0x98,0x03,0x9b,0xc7,0xc8,0x18 };
 void ctrl_c_handler(int) { stop_flag = true; }
 hdr_histogram *latency_hist = nullptr;
 double scale_value = 10;
@@ -81,7 +82,7 @@ void socket_init(NetParam &net_param) {
             assert(connfd >= 0);
             int nodeId = 0;
             assert(read(connfd, static_cast<void *>(&nodeId), sizeof(nodeId)) == sizeof(nodeId));
-            printf("connected by %d", nodeId);
+            printf("connected by %d\n", nodeId);
             fflush(stdout);
             net_param.sockfd[nodeId] = connfd;
         }
@@ -101,7 +102,7 @@ void socket_init(NetParam &net_param) {
     }
 }
 void exchange_data(NetParam &net_param, PingPongInfo *local_info, PingPongInfo *remote_info) {
-    printf("exchange data size:%ld", sizeof(PingPongInfo));
+    printf("exchange data size:%ld\n", sizeof(PingPongInfo));
     size_t dummy;
     (void)dummy;
     if (net_param.nodeId == 0) {
@@ -198,8 +199,13 @@ void sub_task(int thread_index) {
     }
 
     struct KRCORE_IOC_INIT_QP_PARAMS init_qp_params;
+    if (FLAGS_nodeId == 0) {
+        memcpy(create_qp_params.info.mac, server_mac, 6);
+    } else {
+        memcpy(create_qp_params.info.mac, client_mac, 6);
+    }
     exchange_data(net_param, &create_qp_params.info, &init_qp_params.info);
-
+    printf("local qpn = %d remote qpn = %d\n", create_qp_params.info.qpn, init_qp_params.info.qpn);
     retcode = ioctl(fd, KRCORE_IOC_INIT_QP, &init_qp_params);
     if (retcode != 0) {
         printf("thread %d ioctl KRCORE_IOC_INIT_QP %s failed\n", thread_index, krcoreinode);
