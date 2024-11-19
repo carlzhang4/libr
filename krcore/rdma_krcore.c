@@ -71,8 +71,10 @@ struct krcore_info {
     struct scatterlist *sg;
     unsigned int sg_offset;
     size_t user_local_buf;
-    size_t local_buf;
-    size_t remote_buf;
+    size_t local_buf; // vmalloc address, can direct load/store
+    size_t local_dma_buf; // dma address created by ib_dma_map_sg. 尽管连续的虚拟地址对应的是离散的物理地址，但是RDMA还是需要使用第0个sg的dma地址+offset作为rdma wr的地址
+    // https://elixir.bootlin.com/linux/v5.15.102/source/drivers/infiniband/core/verbs.c#L2682
+    size_t remote_dma_buf;
     unsigned int remote_rkey;
     int num_wrs;
     int num_sges_per_wr;
@@ -207,7 +209,26 @@ static int krcore_release(struct inode *inodep, struct file *filep) {
     mutex_unlock(&ioMutex);
     return 0;
 }
+static void krcore_send_reg_mr(krcore_info_t *info) {
+    struct ib_reg_wr wr;
+    wr.wr.next = NULL;
 
+    wr.wr.opcode = IB_WR_REG_MR;
+    wr.wr.num_sge = 0;
+    wr.wr.send_flags = IB_SEND_SIGNALED;
+    wr.mr = info->mr;
+    wr.key = info->mr->lkey;
+    wr.access = IB_ACCESS_LOCAL_WRITE | IB_ACCESS_REMOTE_READ | IB_ACCESS_REMOTE_WRITE;
+    ib_post_send(info->qp, &wr.wr, NULL);
+
+    while (ib_poll_cq(info->send_cq, 1, info->send_wc) == 0) {
+    }
+    if (info->send_wc->status != IB_WC_SUCCESS) {
+        pr_err("%s: failed to register mr\n", MODULE_NAME);
+    } else {
+        pr_info("%s: mr registered\n", MODULE_NAME);
+    }
+}
 static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     int ret = 0;
     int index = 0;
@@ -268,11 +289,31 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     }
 
     info->sg_offset = 0;
-    if (ib_map_mr_sg(info->mr, info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE, &info->sg_offset, PAGE_SIZE) < 0) {
+    if (ib_dma_map_sg(global_device, info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE, DMA_BIDIRECTIONAL) < 0) {
+        pr_err("%s: failed to map sg\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+    // index = 0;
+    // for (;index < 50;index++) {
+    //     struct scatterlist *sg = info->sg + index;
+    //     pr_info("%s: sg[%d] va: %lx page: %p, offset: %d, dma_address: %lx\n", MODULE_NAME, index, info->original_buf + (index * PAGE_SIZE), sg_page(sg), sg->offset, sg->dma_address);
+    // }
+
+    index = ib_map_mr_sg(info->mr, info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE, &info->sg_offset, PAGE_SIZE);
+    if (index < 0 || index != KRCORE_ALLOC_SIZE / PAGE_SIZE) {
         pr_err("%s: failed to map mr sg\n", MODULE_NAME);
         return -ENOMEM;
     }
-    info->local_buf = info->original_buf + info->sg_offset;
+
+    // index = 0;
+    // for (;index < 50;index++) {
+    //     struct scatterlist *sg = info->sg + index;
+    //     pr_info("%s: sg[%d] va: %lx page: %p, offset: %d, dma_address: %lx\n", MODULE_NAME, index, info->original_buf + (index * PAGE_SIZE), sg_page(sg), sg->offset, sg->dma_address);
+    // }
+
+
+    info->local_buf = info->original_buf;
+    info->local_dma_buf = info->sg->dma_address;
     info->user_local_buf = params.user_buf;
 
     info->send_cq = ib_create_cq(global_device, NULL, NULL, NULL, &send_cq_attr);
@@ -311,7 +352,7 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     params.info.psn = params.info.qpn & 0xffffff;
     params.info.rkey = info->mr->rkey;
     params.info.out_reads = 1;
-    params.info.vaddr = info->local_buf;
+    params.info.vaddr = info->local_dma_buf;
     memcpy(params.info.raw_gid, temp_gid.raw, 16);
 
     info->send_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * KRCORE_NUM_WRS, GFP_KERNEL);
@@ -344,7 +385,7 @@ static void krcore_init_wr_base_send_recv(krcore_info_t *info) {
     memset(recv_wr, 0, sizeof(struct ib_recv_wr) * info->num_wrs);
 
     for (;index < info->num_wrs;index++) {
-        send_sge_list[index].addr = info->local_buf;
+        send_sge_list[index].addr = info->local_dma_buf;
         send_sge_list[index].lkey = info->mr->lkey;
 
         send_wr[index].sg_list = send_sge_list + index * info->num_sges_per_wr;
@@ -357,7 +398,7 @@ static void krcore_init_wr_base_send_recv(krcore_info_t *info) {
             send_wr[index - 1].next = send_wr + index;
         }
 
-        recv_sge_list[index].addr = info->local_buf;
+        recv_sge_list[index].addr = info->local_dma_buf;
         recv_sge_list[index].lkey = info->mr->lkey;
         recv_wr[index].sg_list = recv_sge_list + index * info->num_sges_per_wr;
         recv_wr[index].num_sge = info->num_sges_per_wr;
@@ -423,12 +464,14 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
         return -ENOMEM;
     }
 
-    info->remote_buf = params.info.vaddr;
+    info->remote_dma_buf = params.info.vaddr;
     info->remote_rkey = params.info.rkey;
 
     krcore_init_wr_base_send_recv(info);
 
     pr_info("%s: Connected success, local QPN:%#06x, remote QPN:%#08x\n", MODULE_NAME, info->qp->qp_num, params.info.qpn);
+
+    krcore_send_reg_mr(info);
 
     if (copy_to_user(_params, &params, sizeof(params))) {
         pr_err("%s: failed to copy params to user\n", MODULE_NAME);
@@ -450,7 +493,7 @@ static int krcore_post_send(krcore_info_t *info, void __user *_params) {
         pr_err("%s: failed to copy data from user\n", MODULE_NAME);
         return -EFAULT;
     }
-    info->send_sge_list[0].addr = info->local_buf + params.offset;
+    info->send_sge_list[0].addr = info->local_dma_buf + params.offset;
     info->send_sge_list[0].length = params.length;
     info->send_wr->wr_id = params.offset;
     info->send_wr->next = NULL;
@@ -475,7 +518,7 @@ static int krcore_post_recv(krcore_info_t *info, void __user *_params) {
         pr_err("%s: failed to copy params from user\n", MODULE_NAME);
         return -EFAULT;
     }
-    info->recv_sge_list[0].addr = info->local_buf + params.offset;
+    info->recv_sge_list[0].addr = info->local_dma_buf + params.offset;
     info->recv_sge_list[0].length = params.length;
     info->recv_wr->wr_id = params.offset;
     info->recv_wr->next = NULL;
@@ -509,7 +552,7 @@ static int krcore_poll_send_cq(krcore_info_t *info, void __user *_params) {
     }
     for (;index < ne;index++) {
         if (info->send_wc[index].status != IB_WC_SUCCESS) {
-            pr_err("%s: send wc status is not success\n", MODULE_NAME);
+            pr_err("%s: send wc status is not success %d\n", MODULE_NAME, info->send_wc[index].status);
             return -ENOMEM;
         }
     }
@@ -537,7 +580,7 @@ static int krcore_poll_recv_cq(krcore_info_t *info, void __user *_params) {
     }
     for (;index < ne;index++) {
         if (info->recv_wc[index].status != IB_WC_SUCCESS) {
-            pr_err("%s: recv wc status is not success\n", MODULE_NAME);
+            pr_err("%s: recv wc status is not success %d\n", MODULE_NAME, info->recv_wc[index].status);
             return -ENOMEM;
         }
         // copy data!!

@@ -43,6 +43,47 @@ public:
     int sockfd[2];
     int sock_port;
 };
+class OffsetHandler {
+private:
+    int max_num;
+    int step_size;
+    int buf_offset;
+    size_t cur;
+
+public:
+    OffsetHandler() {
+        cur = 0;
+    }
+
+    OffsetHandler(int max_num, int step_size, int buf_offset):max_num(max_num), step_size(step_size), buf_offset(buf_offset) {
+        cur = 0;
+    }
+    void init(int max_num, int step_size, int buf_offset) {
+        cur = 0;
+        this->max_num = max_num;
+        this->step_size = step_size;
+        this->buf_offset = buf_offset;
+    }
+    size_t step() {
+        size_t ret = offset();
+        cur += 1;
+        return ret;
+    }
+    size_t step(int step) {
+        size_t ret = offset();
+        cur += step;
+        return ret;
+    }
+    size_t offset() {
+        return (cur % max_num) * step_size + buf_offset;
+    }
+    size_t index() {
+        return cur;
+    }
+    int index_mod() {
+        return cur % max_num;
+    }
+};
 
 static double get_tsc_freq_per_ns() {
     // MUST BE CHANGE BY 
@@ -168,10 +209,180 @@ void wait_scheduling(int thread_index, std::mutex &IO_LOCK) {
     printf("Thread [%2d] has been moved to core [%2d]", thread_index, sched_getcpu());
 }
 
-void sub_task_server(int thread_index) {
+
+void krcore_post_send(int krcore_fd, size_t offset, int length) {
+    struct KRCORE_IOC_POST_SEND_PARAMS post_send_params;
+    post_send_params.offset = offset;
+    post_send_params.length = length;
+    int retcode = ioctl(krcore_fd, KRCORE_IOC_POST_SEND, &post_send_params);
+    if (retcode != 0 || post_send_params.success_send_cnt != 1) {
+        printf("ioctl KRCORE_IOC_POST_SEND failed\n");
+        exit(1);
+    }
 }
 
-void sub_task_client(int thread_index) {
+void krcore_post_recv(int krcore_fd, size_t offset, int length) {
+    struct KRCORE_IOC_POST_RECV_PARAMS post_recv_params;
+    post_recv_params.offset = offset;
+    post_recv_params.length = length;
+    int retcode = ioctl(krcore_fd, KRCORE_IOC_POST_RECV, &post_recv_params);
+    if (retcode != 0 || post_recv_params.success_post_cnt != 1) {
+        printf("ioctl KRCORE_IOC_POST_RECV failed\n");
+        exit(1);
+    }
+}
+
+void krcore_poll_send_cq(int krcore_fd, int max_poll_num, int &actual_poll_num) {
+    struct KRCORE_IOC_POLL_SEND_CQ_PARAMS poll_send_cq_params;
+    poll_send_cq_params.max_poll_num = max_poll_num;
+    poll_send_cq_params.actual_poll_num = 0;
+    int retcode = ioctl(krcore_fd, KRCORE_IOC_POLL_SEND_CQ, &poll_send_cq_params);
+    if (retcode != 0) {
+        printf("ioctl KRCORE_IOC_POLL_SEND_CQ failed\n");
+        exit(1);
+    }
+    actual_poll_num = poll_send_cq_params.actual_poll_num;
+}
+
+void krcore_poll_recv_cq(int krcore_fd, int max_poll_num, int &actual_poll_num) {
+    struct KRCORE_IOC_POLL_RECV_CQ_PARAMS poll_recv_cq_params;
+    poll_recv_cq_params.max_poll_num = max_poll_num;
+    poll_recv_cq_params.actual_poll_num = 0;
+    int retcode = ioctl(krcore_fd, KRCORE_IOC_POLL_RECV_CQ, &poll_recv_cq_params);
+    if (retcode != 0) {
+        printf("ioctl KRCORE_IOC_POLL_RECV_CQ failed\n");
+        exit(1);
+    }
+    actual_poll_num = poll_recv_cq_params.actual_poll_num;
+}
+
+void sub_task_server(int thread_index, int krcore_fd, void *user_local_buf) {
+    size_t send_recv_buf_size = KRCORE_ALLOC_SIZE / 2;
+
+    OffsetHandler send(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
+    OffsetHandler send_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
+    OffsetHandler recv(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
+    OffsetHandler recv_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
+
+
+    size_t tx_depth = OUTSTANDING;//handler->tx_depth;
+    size_t rx_depth = KRCORE_RX_DEPTH;
+
+    size_t ops = FLAGS_iterations * (send_recv_buf_size / FLAGS_packSize);
+
+    for (size_t i = 0;i < rx_depth;i++) {
+        krcore_post_recv(krcore_fd, recv.offset(), FLAGS_packSize);
+        recv.step();
+    }
+
+    int done = 0;
+    struct timespec begin_time, end_time;
+    int actual_poll_send_num, actual_poll_recv_num;
+    begin_time.tv_nsec = 0;
+    begin_time.tv_sec = 0;
+
+    while (!done && !stop_flag) {
+        krcore_poll_recv_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_recv_num);
+        if (actual_poll_recv_num != 0 && begin_time.tv_sec == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &begin_time);
+        }
+        for (int i = 0;i < actual_poll_recv_num;i++) {
+            if (recv.index() < ops) {
+                krcore_post_recv(krcore_fd, recv.offset(), FLAGS_packSize);
+                recv.step();
+            }
+            recv_comp.step();
+        }
+        while (send.index() < recv_comp.index() && (send.index() - send_comp.index()) < tx_depth) {
+            krcore_post_send(krcore_fd, send.offset(), FLAGS_packSize);
+            send.step();
+        }
+        krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_send_num);
+        for (int i = 0;i < actual_poll_send_num;i++) {
+            send_comp.step();
+        }
+        if (recv_comp.index() >= ops && send_comp.index() >= ops) {
+            done = 1;
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    double duration = (end_time.tv_sec - begin_time.tv_sec) + (end_time.tv_nsec - begin_time.tv_nsec) / 1e9;
+    double speed = 8.0 * send_comp.index() * FLAGS_packSize / 1000 / 1000 / 1000 / duration;
+
+    std::lock_guard<std::mutex> guard(IO_LOCK);
+    printf("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
+}
+
+void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
+    size_t send_recv_buf_size = KRCORE_ALLOC_SIZE / 2;
+    OffsetHandler send(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
+    OffsetHandler send_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
+    OffsetHandler recv(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
+    OffsetHandler recv_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
+
+
+    size_t tx_depth = OUTSTANDING;//handler->tx_depth;
+    size_t rx_depth = KRCORE_RX_DEPTH;
+
+    size_t ops = FLAGS_iterations * (send_recv_buf_size / FLAGS_packSize);
+
+    std::vector<size_t>timers(128);
+    size_t timer_head = 0, timer_tail = 0;
+
+    for (size_t i = 0;i < rx_depth;i++) {
+        krcore_post_recv(krcore_fd, recv.offset(), FLAGS_packSize);
+        recv.step();
+    }
+
+    for (size_t i = 0;i < tx_depth;i++) {
+        krcore_post_send(krcore_fd, send.offset(), FLAGS_packSize);
+        timers[timer_head] = get_tsc();
+        timer_head = (timer_head + 1) % 128;
+        send.step();
+    }
+
+    int done = 0;
+    struct timespec begin_time, end_time;
+    int actual_poll_send_num, actual_poll_recv_num;
+    begin_time.tv_nsec = 0;
+    begin_time.tv_sec = 0;
+
+    while (!done && !stop_flag) {
+        krcore_poll_recv_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_recv_num);
+        if (actual_poll_recv_num != 0 && begin_time.tv_sec == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &begin_time);
+        }
+        for (int i = 0;i < actual_poll_recv_num;i++) {
+            hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
+            // printf("recv_comp:%ld\n", recv_comp.index());
+            timer_tail = (timer_tail + 1) % 128;
+            if (recv.index() < ops) {
+                krcore_post_recv(krcore_fd, recv.offset(), FLAGS_packSize);
+                recv.step();
+            }
+            recv_comp.step();
+        }
+        while (send.index() < ops && (send.index() - send_comp.index()) < tx_depth) {
+            krcore_post_send(krcore_fd, send.offset(), FLAGS_packSize);
+            timers[timer_head] = get_tsc();
+            timer_head = (timer_head + 1) % 128;
+            send.step();
+        }
+        krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_send_num);
+        for (int i = 0;i < actual_poll_send_num;i++) {
+            // printf("send_comp:%ld\n", send_comp.index());
+            send_comp.step();
+        }
+        if (recv_comp.index() >= ops && send_comp.index() >= ops) {
+            done = 1;
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    double duration = (end_time.tv_sec - begin_time.tv_sec) + (end_time.tv_nsec - begin_time.tv_nsec) / 1e9;
+    double speed = 8.0 * send_comp.index() * FLAGS_packSize / 1000 / 1000 / 1000 / duration;
+
+    std::lock_guard<std::mutex> guard(IO_LOCK);
+    printf("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
 }
 
 void sub_task(int thread_index) {
@@ -212,9 +423,9 @@ void sub_task(int thread_index) {
     }
 
     if (FLAGS_nodeId == 0) {
-        sub_task_server(thread_index);
+        sub_task_server(thread_index, fd, user_local_buf);
     } else {
-        sub_task_client(thread_index);
+        sub_task_client(thread_index, fd, user_local_buf);
     }
 
     struct KRCORE_IOC_FREE_QP_PARAMS free_qp_params;
