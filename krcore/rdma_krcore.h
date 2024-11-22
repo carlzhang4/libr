@@ -17,6 +17,7 @@ struct PingPongInfo {
 };
 struct KRCORE_IOC_CREATE_QP_PARAMS {
     size_t user_buf; // size=KRCORE_ALLOC_SIZE, create in user space, half of the buffer used for send and the other half for recv
+    size_t batch_size;
     struct PingPongInfo info;
 };
 #define KRCORE_IOC_CREATE_QP _IOWR(KRCORE_IOCTL, 1, struct KRCORE_IOC_CREATE_QP_PARAMS)
@@ -32,8 +33,9 @@ struct KRCORE_IOC_INIT_QP_PARAMS {
 
 struct KRCORE_IOC_POST_SEND_PARAMS {
     size_t offset;
-    int length;
-    int success_send_cnt;
+    size_t length;
+    size_t batch_size;
+    size_t success_send_cnt;
 };
 #define KRCORE_IOC_POST_SEND _IOWR(KRCORE_IOCTL, 3, struct KRCORE_IOC_POST_SEND_PARAMS)
 
@@ -41,8 +43,9 @@ struct KRCORE_IOC_POST_SEND_PARAMS {
 
 struct KRCORE_IOC_POST_RECV_PARAMS {
     size_t offset;
-    int length;
-    int success_post_cnt;
+    size_t length;
+    size_t batch_size;
+    size_t success_post_cnt;
 };
 #define KRCORE_IOC_POST_RECV _IOWR(KRCORE_IOCTL, 4, struct KRCORE_IOC_POST_RECV_PARAMS)
 

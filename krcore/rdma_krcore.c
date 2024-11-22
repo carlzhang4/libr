@@ -355,15 +355,19 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     params.info.vaddr = info->local_dma_buf;
     memcpy(params.info.raw_gid, temp_gid.raw, 16);
 
-    info->send_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * KRCORE_NUM_WRS, GFP_KERNEL);
-    info->recv_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * KRCORE_NUM_WRS, GFP_KERNEL);
-    info->send_wr = kmalloc(sizeof(struct ib_send_wr) * KRCORE_NUM_WRS, GFP_KERNEL);
-    info->recv_wr = kmalloc(sizeof(struct ib_recv_wr) * KRCORE_NUM_WRS, GFP_KERNEL);
+    if (params.batch_size == 0) {
+        info->num_wrs = KRCORE_NUM_WRS;
+    } else {
+        info->num_wrs = params.batch_size;
+    }
+    info->send_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * info->num_wrs, GFP_KERNEL);
+    info->recv_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * info->num_wrs, GFP_KERNEL);
+    info->send_wr = kmalloc(sizeof(struct ib_send_wr) * info->num_wrs, GFP_KERNEL);
+    info->recv_wr = kmalloc(sizeof(struct ib_recv_wr) * info->num_wrs, GFP_KERNEL);
     info->send_wc = kmalloc(sizeof(struct ib_wc) * KRCORE_CQ_POLL_BATCH, GFP_KERNEL);
     info->recv_wc = kmalloc(sizeof(struct ib_wc) * KRCORE_CQ_POLL_BATCH, GFP_KERNEL);
-    info->num_sges = KRCORE_NUM_SGES_PER_WR * KRCORE_NUM_WRS;
+    info->num_sges = KRCORE_NUM_SGES_PER_WR * info->num_wrs;
     info->num_sges_per_wr = KRCORE_NUM_SGES_PER_WR;
-    info->num_wrs = KRCORE_NUM_WRS;
     info->tx_depth = KRCORE_TX_DEPTH;
     info->rx_depth = KRCORE_RX_DEPTH;
 
@@ -469,9 +473,9 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
 
     krcore_init_wr_base_send_recv(info);
 
-    pr_info("%s: Connected success, local QPN:%#06x, remote QPN:%#08x\n", MODULE_NAME, info->qp->qp_num, params.info.qpn);
-
     krcore_send_reg_mr(info);
+
+    pr_info("%s: Connected success, local QPN:%#06x, remote QPN:%#08x\n", MODULE_NAME, info->qp->qp_num, params.info.qpn);
 
     if (copy_to_user(_params, &params, sizeof(params))) {
         pr_err("%s: failed to copy params to user\n", MODULE_NAME);
@@ -483,27 +487,37 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
 
 static int krcore_post_send(krcore_info_t *info, void __user *_params) {
     int ret = 0;
+    int index = 0;
+    size_t now_offset = 0;
     struct KRCORE_IOC_POST_SEND_PARAMS params;
     if (copy_from_user(&params, _params, sizeof(params))) {
         pr_err("%s: failed to copy params from user\n", MODULE_NAME);
         return -EFAULT;
     }
-    // copy data!
-    if (copy_from_user((void *)(info->local_buf + params.offset), (void *)(info->user_local_buf + params.offset), params.length)) {
-        pr_err("%s: failed to copy data from user\n", MODULE_NAME);
-        return -EFAULT;
+    for (;index < params.batch_size;index++) {
+        now_offset = (params.offset + index * params.length) % (KRCORE_ALLOC_SIZE / 2);
+        // copy data!
+        if (copy_from_user((void *)(info->local_buf + now_offset), (void *)(info->user_local_buf + now_offset), params.length)) {
+            pr_err("%s: failed to copy data from user\n", MODULE_NAME);
+            return -EFAULT;
+        }
+
+        info->send_sge_list[0].addr = info->local_dma_buf + now_offset;
+        info->send_sge_list[0].length = params.length;
+        info->send_wr->wr_id = now_offset;
+        if (index < params.batch_size - 1) {
+            info->send_wr->next = info->send_wr + 1;
+        } else {
+            info->send_wr->next = NULL;
+        }
     }
-    info->send_sge_list[0].addr = info->local_dma_buf + params.offset;
-    info->send_sge_list[0].length = params.length;
-    info->send_wr->wr_id = params.offset;
-    info->send_wr->next = NULL;
 
     if (ib_post_send(info->qp, info->send_wr, NULL)) {
         pr_err("%s: failed to post send\n", MODULE_NAME);
         return -ENOMEM;
     }
 
-    params.success_send_cnt = 1;
+    params.success_send_cnt = params.batch_size;
     if (copy_to_user(_params, &params, sizeof(params))) {
         pr_err("%s: failed to copy params to user\n", MODULE_NAME);
         return -EFAULT;
@@ -513,22 +527,32 @@ static int krcore_post_send(krcore_info_t *info, void __user *_params) {
 
 static int krcore_post_recv(krcore_info_t *info, void __user *_params) {
     int ret = 0;
+    int index = 0;
+    int now_offset = 0;
     struct KRCORE_IOC_POST_RECV_PARAMS params;
     if (copy_from_user(&params, _params, sizeof(params))) {
         pr_err("%s: failed to copy params from user\n", MODULE_NAME);
         return -EFAULT;
     }
-    info->recv_sge_list[0].addr = info->local_dma_buf + params.offset;
-    info->recv_sge_list[0].length = params.length;
-    info->recv_wr->wr_id = params.offset;
-    info->recv_wr->next = NULL;
+
+    for (;index < params.batch_size;index++) {
+        now_offset = (params.offset + index * params.length) % (KRCORE_ALLOC_SIZE / 2) + (KRCORE_ALLOC_SIZE / 2);
+        info->recv_sge_list[0].addr = info->local_dma_buf + now_offset;
+        info->recv_sge_list[0].length = params.length;
+        info->recv_wr->wr_id = now_offset;
+        if (index < params.batch_size - 1) {
+            info->recv_wr->next = info->recv_wr + 1;
+        } else {
+            info->recv_wr->next = NULL;
+        }
+    }
 
     if (ib_post_recv(info->qp, info->recv_wr, NULL)) {
         pr_err("%s: failed to post recv\n", MODULE_NAME);
         return -ENOMEM;
     }
 
-    params.success_post_cnt = 1;
+    params.success_post_cnt = params.batch_size;
     if (copy_to_user(_params, &params, sizeof(params))) {
         pr_err("%s: failed to copy params to user\n", MODULE_NAME);
         return -EFAULT;
@@ -619,6 +643,8 @@ static int krcore_free_qp(krcore_info_t *info, void __user *_params) {
     ib_dealloc_pd(info->pd);
 
     vfree((void *)info->original_buf);
+
+    pr_info("%s: Free QP success, local QPN:%#06x\n", MODULE_NAME, info->qp->qp_num);
 
     params.success = 1;
     if (copy_to_user(_params, &params, sizeof(params))) {
