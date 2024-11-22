@@ -9,6 +9,7 @@
 #include <numaif.h>
 #include <numa.h>
 #include <fcntl.h>
+#include <algorithm>
 
 #include <gflags/gflags.h>
 #include <hdr/hdr_histogram.h>
@@ -25,7 +26,8 @@ DEFINE_int32(coreOffset, 0, "coreOffset");
 DEFINE_int32(numaNode, 0, "numaNode");
 DEFINE_int32(port, 6666, "bind_port");
 
-int OUTSTANDING = 48;
+size_t BATCH_SIZE = 1;
+size_t OUTSTANDING = 64;
 std::atomic<bool> stop_flag = false;
 unsigned char client_mac[6] = { 0x98,0x03,0x9b,0xca,0x48,0x38 };
 unsigned char server_mac[6] = { 0x98,0x03,0x9b,0xc7,0xc8,0x18 };
@@ -84,6 +86,7 @@ public:
         return cur % max_num;
     }
 };
+#define ROUND_UP(value, alignment) (((value) + (alignment) - 1) & ~((alignment) - 1))
 
 static double get_tsc_freq_per_ns() {
     // MUST BE CHANGE BY 
@@ -210,29 +213,31 @@ void wait_scheduling(int thread_index, std::mutex &IO_LOCK) {
 }
 
 
-void krcore_post_send(int krcore_fd, size_t offset, int length) {
+void krcore_post_send(int krcore_fd, size_t offset, size_t batch_size, int length) {
     struct KRCORE_IOC_POST_SEND_PARAMS post_send_params;
     post_send_params.offset = offset;
+    post_send_params.batch_size = batch_size;
     post_send_params.length = length;
     int retcode = ioctl(krcore_fd, KRCORE_IOC_POST_SEND, &post_send_params);
-    if (retcode != 0 || post_send_params.success_send_cnt != 1) {
+    if (retcode != 0 || post_send_params.success_send_cnt != batch_size) {
         printf("ioctl KRCORE_IOC_POST_SEND failed\n");
         exit(1);
     }
 }
 
-void krcore_post_recv(int krcore_fd, size_t offset, int length) {
+void krcore_post_recv(int krcore_fd, size_t offset, size_t batch_size, int length) {
     struct KRCORE_IOC_POST_RECV_PARAMS post_recv_params;
     post_recv_params.offset = offset;
+    post_recv_params.batch_size = batch_size;
     post_recv_params.length = length;
     int retcode = ioctl(krcore_fd, KRCORE_IOC_POST_RECV, &post_recv_params);
-    if (retcode != 0 || post_recv_params.success_post_cnt != 1) {
+    if (retcode != 0 || post_recv_params.success_post_cnt != batch_size) {
         printf("ioctl KRCORE_IOC_POST_RECV failed\n");
         exit(1);
     }
 }
 
-void krcore_poll_send_cq(int krcore_fd, int max_poll_num, int &actual_poll_num) {
+void krcore_poll_send_cq(int krcore_fd, int max_poll_num, size_t &actual_poll_num) {
     struct KRCORE_IOC_POLL_SEND_CQ_PARAMS poll_send_cq_params;
     poll_send_cq_params.max_poll_num = max_poll_num;
     poll_send_cq_params.actual_poll_num = 0;
@@ -244,7 +249,7 @@ void krcore_poll_send_cq(int krcore_fd, int max_poll_num, int &actual_poll_num) 
     actual_poll_num = poll_send_cq_params.actual_poll_num;
 }
 
-void krcore_poll_recv_cq(int krcore_fd, int max_poll_num, int &actual_poll_num) {
+void krcore_poll_recv_cq(int krcore_fd, int max_poll_num, size_t &actual_poll_num) {
     struct KRCORE_IOC_POLL_RECV_CQ_PARAMS poll_recv_cq_params;
     poll_recv_cq_params.max_poll_num = max_poll_num;
     poll_recv_cq_params.actual_poll_num = 0;
@@ -265,19 +270,19 @@ void sub_task_server(int thread_index, int krcore_fd, void *user_local_buf) {
     OffsetHandler recv_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
 
 
-    size_t tx_depth = OUTSTANDING;//handler->tx_depth;
     size_t rx_depth = KRCORE_RX_DEPTH;
 
     size_t ops = FLAGS_iterations * (send_recv_buf_size / FLAGS_packSize);
+    ops = ROUND_UP(ops, BATCH_SIZE);
 
     for (size_t i = 0;i < rx_depth;i++) {
-        krcore_post_recv(krcore_fd, recv.offset(), FLAGS_packSize);
+        krcore_post_recv(krcore_fd, recv.offset(), 1, FLAGS_packSize);
         recv.step();
     }
 
     int done = 0;
     struct timespec begin_time, end_time;
-    int actual_poll_send_num, actual_poll_recv_num;
+    size_t actual_poll_send_num, actual_poll_recv_num;
     begin_time.tv_nsec = 0;
     begin_time.tv_sec = 0;
 
@@ -286,19 +291,26 @@ void sub_task_server(int thread_index, int krcore_fd, void *user_local_buf) {
         if (actual_poll_recv_num != 0 && begin_time.tv_sec == 0) {
             clock_gettime(CLOCK_MONOTONIC, &begin_time);
         }
-        for (int i = 0;i < actual_poll_recv_num;i++) {
+        for (size_t i = 0;i < actual_poll_recv_num;i++) {
             if (recv.index() < ops) {
-                krcore_post_recv(krcore_fd, recv.offset(), FLAGS_packSize);
-                recv.step();
+                if (recv_comp.index() % BATCH_SIZE == BATCH_SIZE - 1) {
+                    krcore_post_recv(krcore_fd, recv.offset(), BATCH_SIZE, FLAGS_packSize);
+                    recv.step(BATCH_SIZE);
+                }
             }
             recv_comp.step();
         }
-        while (send.index() < recv_comp.index() && (send.index() - send_comp.index()) < tx_depth) {
-            krcore_post_send(krcore_fd, send.offset(), FLAGS_packSize);
-            send.step();
+        if (actual_poll_recv_num > 0) {
+            size_t tmp_recv_num = actual_poll_recv_num;
+            while (tmp_recv_num > 0) {
+                int now_send_num = std::min(tmp_recv_num, BATCH_SIZE);
+                krcore_post_send(krcore_fd, send.offset(), now_send_num, FLAGS_packSize);
+                send.step(now_send_num);
+                tmp_recv_num -= now_send_num;
+            }
         }
         krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_send_num);
-        for (int i = 0;i < actual_poll_send_num;i++) {
+        for (size_t i = 0;i < actual_poll_send_num;i++) {
             send_comp.step();
         }
         if (recv_comp.index() >= ops && send_comp.index() >= ops) {
@@ -325,17 +337,18 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
     size_t rx_depth = KRCORE_RX_DEPTH;
 
     size_t ops = FLAGS_iterations * (send_recv_buf_size / FLAGS_packSize);
+    ops = ROUND_UP(ops, BATCH_SIZE);
 
     std::vector<size_t>timers(128);
     size_t timer_head = 0, timer_tail = 0;
 
     for (size_t i = 0;i < rx_depth;i++) {
-        krcore_post_recv(krcore_fd, recv.offset(), FLAGS_packSize);
+        krcore_post_recv(krcore_fd, recv.offset(), 1, FLAGS_packSize);
         recv.step();
     }
 
     for (size_t i = 0;i < tx_depth;i++) {
-        krcore_post_send(krcore_fd, send.offset(), FLAGS_packSize);
+        krcore_post_send(krcore_fd, send.offset(), 1, FLAGS_packSize);
         timers[timer_head] = get_tsc();
         timer_head = (timer_head + 1) % 128;
         send.step();
@@ -343,7 +356,7 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
 
     int done = 0;
     struct timespec begin_time, end_time;
-    int actual_poll_send_num, actual_poll_recv_num;
+    size_t actual_poll_send_num, actual_poll_recv_num;
     begin_time.tv_nsec = 0;
     begin_time.tv_sec = 0;
 
@@ -352,27 +365,40 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
         if (actual_poll_recv_num != 0 && begin_time.tv_sec == 0) {
             clock_gettime(CLOCK_MONOTONIC, &begin_time);
         }
-        for (int i = 0;i < actual_poll_recv_num;i++) {
+        for (size_t i = 0;i < actual_poll_recv_num;i++) {
             hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
             // printf("recv_comp:%ld\n", recv_comp.index());
             timer_tail = (timer_tail + 1) % 128;
+        }
+        for (size_t i = 0;i < actual_poll_recv_num;i++) {
             if (recv.index() < ops) {
-                krcore_post_recv(krcore_fd, recv.offset(), FLAGS_packSize);
-                recv.step();
+                if (recv_comp.index() % BATCH_SIZE == BATCH_SIZE - 1) {
+                    krcore_post_recv(krcore_fd, recv.offset(), BATCH_SIZE, FLAGS_packSize);
+                    recv.step(BATCH_SIZE);
+                }
             }
             recv_comp.step();
         }
-        while (send.index() < ops && (send.index() - send_comp.index()) < tx_depth) {
-            krcore_post_send(krcore_fd, send.offset(), FLAGS_packSize);
-            timers[timer_head] = get_tsc();
-            timer_head = (timer_head + 1) % 128;
-            send.step();
-        }
+
         krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_send_num);
-        for (int i = 0;i < actual_poll_send_num;i++) {
-            // printf("send_comp:%ld\n", send_comp.index());
+        for (size_t i = 0;i < actual_poll_send_num;i++) {
             send_comp.step();
         }
+
+        if (send.index() < ops && send.index() - recv_comp.index() < tx_depth) {
+            size_t now_send_num = std::min(ops - send.index(), tx_depth - (send.index() - recv_comp.index()));
+            while (now_send_num > 0) {
+                size_t tmp_send_num = std::min(now_send_num, BATCH_SIZE);
+                krcore_post_send(krcore_fd, send.offset(), tmp_send_num, FLAGS_packSize);
+                for (size_t i = 0;i < tmp_send_num;i++) {
+                    timers[timer_head] = get_tsc();
+                    timer_head = (timer_head + 1) % 128;
+                }
+                send.step(tmp_send_num);
+                now_send_num -= tmp_send_num;
+            }
+        }
+
         if (recv_comp.index() >= ops && send_comp.index() >= ops) {
             done = 1;
         }
@@ -404,6 +430,7 @@ void sub_task(int thread_index) {
 
     struct KRCORE_IOC_CREATE_QP_PARAMS create_qp_params;
     create_qp_params.user_buf = reinterpret_cast<size_t>(user_local_buf);
+    create_qp_params.batch_size = BATCH_SIZE;
     int retcode = ioctl(fd, KRCORE_IOC_CREATE_QP, &create_qp_params);
     if (retcode != 0) {
         printf("thread %d ioctl KRCORE_IOC_CREATE_QP %s failed\n", thread_index, krcoreinode);
