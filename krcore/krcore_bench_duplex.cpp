@@ -25,9 +25,8 @@ DEFINE_string(serverIp, "", "serverIp");
 DEFINE_int32(coreOffset, 0, "coreOffset");
 DEFINE_int32(numaNode, 0, "numaNode");
 DEFINE_int32(port, 6666, "bind_port");
-
-size_t BATCH_SIZE = 1;
-size_t OUTSTANDING = 64;
+DEFINE_uint64(batch_size, 1, "requeset batch_size");
+DEFINE_uint64(outstanding, 64, "outstanding request");
 std::atomic<bool> stop_flag = false;
 unsigned char client_mac[6] = { 0x98,0x03,0x9b,0xca,0x48,0x38 };
 unsigned char server_mac[6] = { 0x98,0x03,0x9b,0xc7,0xc8,0x18 };
@@ -273,7 +272,7 @@ void sub_task_server(int thread_index, int krcore_fd, void *user_local_buf) {
     size_t rx_depth = KRCORE_RX_DEPTH;
 
     size_t ops = FLAGS_iterations * (send_recv_buf_size / FLAGS_packSize);
-    ops = ROUND_UP(ops, BATCH_SIZE);
+    ops = ROUND_UP(ops, FLAGS_batch_size);
 
     for (size_t i = 0;i < rx_depth;i++) {
         krcore_post_recv(krcore_fd, recv.offset(), 1, FLAGS_packSize);
@@ -293,9 +292,9 @@ void sub_task_server(int thread_index, int krcore_fd, void *user_local_buf) {
         }
         for (size_t i = 0;i < actual_poll_recv_num;i++) {
             if (recv.index() < ops) {
-                if (recv_comp.index() % BATCH_SIZE == BATCH_SIZE - 1) {
-                    krcore_post_recv(krcore_fd, recv.offset(), BATCH_SIZE, FLAGS_packSize);
-                    recv.step(BATCH_SIZE);
+                if (recv_comp.index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
+                    krcore_post_recv(krcore_fd, recv.offset(), FLAGS_batch_size, FLAGS_packSize);
+                    recv.step(FLAGS_batch_size);
                 }
             }
             recv_comp.step();
@@ -303,7 +302,7 @@ void sub_task_server(int thread_index, int krcore_fd, void *user_local_buf) {
         if (actual_poll_recv_num > 0) {
             size_t tmp_recv_num = actual_poll_recv_num;
             while (tmp_recv_num > 0) {
-                int now_send_num = std::min(tmp_recv_num, BATCH_SIZE);
+                int now_send_num = std::min(tmp_recv_num, FLAGS_batch_size);
                 krcore_post_send(krcore_fd, send.offset(), now_send_num, FLAGS_packSize);
                 send.step(now_send_num);
                 tmp_recv_num -= now_send_num;
@@ -333,11 +332,11 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
     OffsetHandler recv_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
 
 
-    size_t tx_depth = OUTSTANDING;//handler->tx_depth;
+    size_t tx_depth = FLAGS_outstanding;//handler->tx_depth;
     size_t rx_depth = KRCORE_RX_DEPTH;
 
     size_t ops = FLAGS_iterations * (send_recv_buf_size / FLAGS_packSize);
-    ops = ROUND_UP(ops, BATCH_SIZE);
+    ops = ROUND_UP(ops, FLAGS_batch_size);
 
     std::vector<size_t>timers(128);
     size_t timer_head = 0, timer_tail = 0;
@@ -372,9 +371,9 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
         }
         for (size_t i = 0;i < actual_poll_recv_num;i++) {
             if (recv.index() < ops) {
-                if (recv_comp.index() % BATCH_SIZE == BATCH_SIZE - 1) {
-                    krcore_post_recv(krcore_fd, recv.offset(), BATCH_SIZE, FLAGS_packSize);
-                    recv.step(BATCH_SIZE);
+                if (recv_comp.index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
+                    krcore_post_recv(krcore_fd, recv.offset(), FLAGS_batch_size, FLAGS_packSize);
+                    recv.step(FLAGS_batch_size);
                 }
             }
             recv_comp.step();
@@ -388,7 +387,7 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
         if (send.index() < ops && send.index() - recv_comp.index() < tx_depth) {
             size_t now_send_num = std::min(ops - send.index(), tx_depth - (send.index() - recv_comp.index()));
             while (now_send_num > 0) {
-                size_t tmp_send_num = std::min(now_send_num, BATCH_SIZE);
+                size_t tmp_send_num = std::min(now_send_num, FLAGS_batch_size);
                 krcore_post_send(krcore_fd, send.offset(), tmp_send_num, FLAGS_packSize);
                 for (size_t i = 0;i < tmp_send_num;i++) {
                     timers[timer_head] = get_tsc();
@@ -430,7 +429,7 @@ void sub_task(int thread_index) {
 
     struct KRCORE_IOC_CREATE_QP_PARAMS create_qp_params;
     create_qp_params.user_buf = reinterpret_cast<size_t>(user_local_buf);
-    create_qp_params.batch_size = BATCH_SIZE;
+    create_qp_params.batch_size = FLAGS_batch_size;
     int retcode = ioctl(fd, KRCORE_IOC_CREATE_QP, &create_qp_params);
     if (retcode != 0) {
         printf("thread %d ioctl KRCORE_IOC_CREATE_QP %s failed\n", thread_index, krcoreinode);

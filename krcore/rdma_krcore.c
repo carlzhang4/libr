@@ -33,6 +33,9 @@ MODULE_VERSION("0.1");
 static int    majorNumber;
 static DEFINE_MUTEX(ioMutex);
 
+static int SEND_COPY = 0;
+static int RECV_COPY = 1;
+
 //  Prototypes for our device functions.
 static int     krcore_open(struct inode *, struct file *);
 static int     krcore_release(struct inode *, struct file *);
@@ -497,18 +500,21 @@ static int krcore_post_send(krcore_info_t *info, void __user *_params) {
     for (;index < params.batch_size;index++) {
         now_offset = (params.offset + index * params.length) % (KRCORE_ALLOC_SIZE / 2);
         // copy data!
-        if (copy_from_user((void *)(info->local_buf + now_offset), (void *)(info->user_local_buf + now_offset), params.length)) {
-            pr_err("%s: failed to copy data from user\n", MODULE_NAME);
-            return -EFAULT;
+        if (SEND_COPY) {
+            if (copy_from_user((void *)(info->local_buf + now_offset), (void *)(info->user_local_buf + now_offset), params.length)) {
+                pr_err("%s: failed to copy data from user\n", MODULE_NAME);
+                return -EFAULT;
+            }
         }
 
-        info->send_sge_list[0].addr = info->local_dma_buf + now_offset;
-        info->send_sge_list[0].length = params.length;
-        info->send_wr->wr_id = now_offset;
+
+        info->send_sge_list[index].addr = info->local_dma_buf + now_offset;
+        info->send_sge_list[index].length = params.length;
+        info->send_wr[index].wr_id = now_offset;
         if (index < params.batch_size - 1) {
-            info->send_wr->next = info->send_wr + 1;
+            info->send_wr[index].next = &info->send_wr[index + 1];
         } else {
-            info->send_wr->next = NULL;
+            info->send_wr[index].next = NULL;
         }
     }
 
@@ -537,13 +543,13 @@ static int krcore_post_recv(krcore_info_t *info, void __user *_params) {
 
     for (;index < params.batch_size;index++) {
         now_offset = (params.offset + index * params.length) % (KRCORE_ALLOC_SIZE / 2) + (KRCORE_ALLOC_SIZE / 2);
-        info->recv_sge_list[0].addr = info->local_dma_buf + now_offset;
-        info->recv_sge_list[0].length = params.length;
-        info->recv_wr->wr_id = now_offset;
+        info->recv_sge_list[index].addr = info->local_dma_buf + now_offset;
+        info->recv_sge_list[index].length = params.length;
+        info->recv_wr[index].wr_id = now_offset;
         if (index < params.batch_size - 1) {
-            info->recv_wr->next = info->recv_wr + 1;
+            info->recv_wr[index].next = &info->recv_wr[index + 1];
         } else {
-            info->recv_wr->next = NULL;
+            info->recv_wr[index].next = NULL;
         }
     }
 
@@ -608,9 +614,11 @@ static int krcore_poll_recv_cq(krcore_info_t *info, void __user *_params) {
             return -ENOMEM;
         }
         // copy data!!
-        if (copy_to_user((void *)(info->user_local_buf + info->recv_wc[index].wr_id), (void *)(info->local_buf + info->recv_wc[index].wr_id), info->recv_wc[index].byte_len)) {
-            pr_err("%s: failed to copy data to user\n", MODULE_NAME);
-            return -EFAULT;
+        if (RECV_COPY) {
+            if (copy_to_user((void *)(info->user_local_buf + info->recv_wc[index].wr_id), (void *)(info->local_buf + info->recv_wc[index].wr_id), info->recv_wc[index].byte_len)) {
+                pr_err("%s: failed to copy data to user\n", MODULE_NAME);
+                return -EFAULT;
+            }
         }
     }
     params.actual_poll_num = ne;
