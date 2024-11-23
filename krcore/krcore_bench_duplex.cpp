@@ -26,7 +26,7 @@ DEFINE_int32(coreOffset, 0, "coreOffset");
 DEFINE_int32(numaNode, 0, "numaNode");
 DEFINE_int32(port, 6666, "bind_port");
 DEFINE_uint64(batch_size, 1, "requeset batch_size");
-DEFINE_uint64(outstanding, 64, "outstanding request");
+DEFINE_uint64(outstanding, 32, "outstanding request");
 std::atomic<bool> stop_flag = false;
 unsigned char client_mac[6] = { 0x98,0x03,0x9b,0xca,0x48,0x38 };
 unsigned char server_mac[6] = { 0x98,0x03,0x9b,0xc7,0xc8,0x18 };
@@ -34,6 +34,7 @@ void ctrl_c_handler(int) { stop_flag = true; }
 hdr_histogram *latency_hist = nullptr;
 double scale_value = 10;
 std::mutex IO_LOCK;
+std::atomic<int> send_sync = 0;
 const char *krcoreinode = "/dev/krcore";
 
 class NetParam {
@@ -346,6 +347,10 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
         recv.step();
     }
 
+    send_sync++;
+    while (send_sync != FLAGS_threads) {
+    }
+
     for (size_t i = 0;i < tx_depth;i++) {
         krcore_post_send(krcore_fd, send.offset(), 1, FLAGS_packSize);
         timers[timer_head] = get_tsc();
@@ -407,7 +412,7 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
     double speed = 8.0 * send_comp.index() * FLAGS_packSize / 1000 / 1000 / 1000 / duration;
 
     std::lock_guard<std::mutex> guard(IO_LOCK);
-    printf("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
+    printf("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs\n", thread_index, duration, speed);
 }
 
 void sub_task(int thread_index) {
