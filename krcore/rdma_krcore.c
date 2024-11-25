@@ -47,9 +47,6 @@ struct ib_device *global_device;
 struct ib_client krcore_ib_client;
 
 unsigned int current_mtu;
-struct qp_handler {
-    struct ib_pd pd;
-};
 
 struct krcore_info {
     struct list_head list;
@@ -162,7 +159,7 @@ static void __exit mod_exit(void) {
  *  @param filep A pointer to a file object (defined in linux/fs.h)
  */
 static int krcore_open(struct inode *inodep, struct file *filep) {
-    krcore_info_t *info = kzalloc(sizeof(krcore_info_t), GFP_KERNEL);
+    krcore_info_t *info = kzalloc(sizeof(krcore_info_t) * KRCORE_MAX_QP_PER_CORE, GFP_KERNEL);
     //  Try and lock the mutex.
     mutex_lock(&ioMutex);
     if (!info) {
@@ -234,7 +231,8 @@ static void krcore_send_reg_mr(krcore_info_t *info) {
 }
 static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
     int ret = 0;
-    int index = 0;
+    krcore_info_t *now_info;
+    int index = 0, qp_index = 0;
     unsigned long page_start;
     struct page *now_page;
 
@@ -260,121 +258,129 @@ static int krcore_create_qp(krcore_info_t *info, void __user *_params) {
         return -EFAULT;
     }
 
-    info->pd = ib_alloc_pd(global_device, 0);
-    if (!info->pd) {
-        pr_err("%s: failed to allocate pd\n", MODULE_NAME);
-        return -ENOMEM;
+    if (params.qp_per_core > KRCORE_MAX_QP_PER_CORE) {
+        pr_err("%s: qp_per_core is too large\n", MODULE_NAME);
+        return -EINVAL;
     }
-    info->mr = ib_alloc_mr(info->pd, IB_MR_TYPE_MEM_REG, KRCORE_ALLOC_SIZE / PAGE_SIZE);
-    if (!info->mr) {
-        pr_err("%s: failed to allocate mr\n", MODULE_NAME);
-        return -ENOMEM;
-    }
-    info->original_buf = (size_t)vmalloc(KRCORE_ALLOC_SIZE);
-    if (!info->original_buf) {
-        pr_err("%s: failed to allocate original_buf\n", MODULE_NAME);
-        return -ENOMEM;
-    }
-    info->sg = kcalloc(KRCORE_ALLOC_SIZE / PAGE_SIZE, sizeof(struct scatterlist), GFP_KERNEL);
-    if (!info->sg) {
-        pr_err("%s: failed to allocate sg\n", MODULE_NAME);
-        return -ENOMEM;
-    }
-    sg_init_table(info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE);
-    for (;index < KRCORE_ALLOC_SIZE / PAGE_SIZE;index++) {
-        page_start = (unsigned long)info->original_buf + (index * PAGE_SIZE);
-        now_page = vmalloc_to_page((void *)page_start);
-        if (!now_page) {
-            pr_err("%s: failed to get page\n", MODULE_NAME);
+
+    for (;qp_index < params.qp_per_core; qp_index++) {
+        now_info = info + qp_index;
+        now_info->pd = ib_alloc_pd(global_device, 0);
+        if (!now_info->pd) {
+            pr_err("%s: failed to allocate pd\n", MODULE_NAME);
             return -ENOMEM;
         }
-        sg_set_page(info->sg + index, now_page, PAGE_SIZE, 0);
+        now_info->mr = ib_alloc_mr(now_info->pd, IB_MR_TYPE_MEM_REG, KRCORE_ALLOC_SIZE / PAGE_SIZE);
+        if (!now_info->mr) {
+            pr_err("%s: failed to allocate mr\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+        now_info->original_buf = (size_t)vmalloc(KRCORE_ALLOC_SIZE);
+        if (!now_info->original_buf) {
+            pr_err("%s: failed to allocate original_buf\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+        now_info->sg = kcalloc(KRCORE_ALLOC_SIZE / PAGE_SIZE, sizeof(struct scatterlist), GFP_KERNEL);
+        if (!now_info->sg) {
+            pr_err("%s: failed to allocate sg\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+        sg_init_table(now_info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE);
+        for (index = 0;index < KRCORE_ALLOC_SIZE / PAGE_SIZE;index++) {
+            page_start = (unsigned long)now_info->original_buf + (index * PAGE_SIZE);
+            now_page = vmalloc_to_page((void *)page_start);
+            if (!now_page) {
+                pr_err("%s: failed to get page\n", MODULE_NAME);
+                return -ENOMEM;
+            }
+            sg_set_page(now_info->sg + index, now_page, PAGE_SIZE, 0);
+        }
+
+        now_info->sg_offset = 0;
+        if (ib_dma_map_sg(global_device, now_info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE, DMA_BIDIRECTIONAL) < 0) {
+            pr_err("%s: failed to map sg\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+        // index = 0;
+        // for (;index < 50;index++) {
+        //     struct scatterlist *sg = now_info->sg + index;
+        //     pr_info("%s: sg[%d] va: %lx page: %p, offset: %d, dma_address: %lx\n", MODULE_NAME, index, now_info->original_buf + (index * PAGE_SIZE), sg_page(sg), sg->offset, sg->dma_address);
+        // }
+
+        index = ib_map_mr_sg(now_info->mr, now_info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE, &now_info->sg_offset, PAGE_SIZE);
+        if (index < 0 || index != KRCORE_ALLOC_SIZE / PAGE_SIZE) {
+            pr_err("%s: failed to map mr sg\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+
+        // index = 0;
+        // for (;index < 50;index++) {
+        //     struct scatterlist *sg = now_info->sg + index;
+        //     pr_info("%s: sg[%d] va: %lx page: %p, offset: %d, dma_address: %lx\n", MODULE_NAME, index, now_info->original_buf + (index * PAGE_SIZE), sg_page(sg), sg->offset, sg->dma_address);
+        // }
+
+
+        now_info->local_buf = now_info->original_buf;
+        now_info->local_dma_buf = now_info->sg->dma_address;
+        now_info->user_local_buf = params.user_buf[qp_index];
+
+        now_info->send_cq = ib_create_cq(global_device, NULL, NULL, NULL, &send_cq_attr);
+        now_info->recv_cq = ib_create_cq(global_device, NULL, NULL, NULL, &recv_cq_attr);
+
+        memset(&qp_init_attr, 0, sizeof(qp_init_attr));
+        qp_init_attr.send_cq = now_info->send_cq;
+        qp_init_attr.recv_cq = now_info->recv_cq;
+        qp_init_attr.cap.max_inline_data = 0;
+        qp_init_attr.cap.max_send_wr = KRCORE_TX_DEPTH;
+        qp_init_attr.cap.max_send_sge = KRCORE_NUM_SGES_PER_WR;
+        qp_init_attr.cap.max_recv_wr = KRCORE_RX_DEPTH;
+        qp_init_attr.cap.max_recv_sge = KRCORE_NUM_SGES_PER_WR;
+        qp_init_attr.qp_type = IB_QPT_RC;
+        now_info->qp = ib_create_qp(now_info->pd, &qp_init_attr);
+        if (!now_info->qp) {
+            pr_err("%s: failed to create qp\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+
+        memset(&qp_attr, 0, sizeof(qp_attr));
+        qp_attr.qp_state = IB_QPS_INIT;
+        qp_attr.pkey_index = 0;
+        qp_attr.port_num = 1;
+        qp_attr.qp_access_flags = IB_ACCESS_REMOTE_WRITE | IB_ACCESS_LOCAL_WRITE;
+        if ((ret = ib_modify_qp(now_info->qp, &qp_attr, flags))) {
+            pr_err("%s: failed to modify qp to init errno: %d\n", MODULE_NAME, ret);
+            return -ENOMEM;
+        }
+
+        ib_query_port(global_device, 1, &port_attr);
+        rdma_query_gid(global_device, 1, KRCORE_RDMA_GID_INDEX, &temp_gid);
+        params.info[qp_index].lid = port_attr.lid;
+        params.info[qp_index].gid_index = KRCORE_RDMA_GID_INDEX;
+        params.info[qp_index].qpn = now_info->qp->qp_num;
+        params.info[qp_index].psn = params.info[qp_index].qpn & 0xffffff;
+        params.info[qp_index].rkey = now_info->mr->rkey;
+        params.info[qp_index].out_reads = 1;
+        params.info[qp_index].vaddr = now_info->local_dma_buf;
+        memcpy(params.info[qp_index].raw_gid, temp_gid.raw, 16);
+
+        if (params.batch_size == 0) {
+            now_info->num_wrs = KRCORE_NUM_WRS;
+        } else {
+            now_info->num_wrs = params.batch_size;
+        }
+        now_info->send_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * now_info->num_wrs, GFP_KERNEL);
+        now_info->recv_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * now_info->num_wrs, GFP_KERNEL);
+        now_info->send_wr = kmalloc(sizeof(struct ib_send_wr) * now_info->num_wrs, GFP_KERNEL);
+        now_info->recv_wr = kmalloc(sizeof(struct ib_recv_wr) * now_info->num_wrs, GFP_KERNEL);
+        now_info->send_wc = kmalloc(sizeof(struct ib_wc) * KRCORE_CQ_POLL_BATCH, GFP_KERNEL);
+        now_info->recv_wc = kmalloc(sizeof(struct ib_wc) * KRCORE_CQ_POLL_BATCH, GFP_KERNEL);
+        now_info->num_sges = KRCORE_NUM_SGES_PER_WR * now_info->num_wrs;
+        now_info->num_sges_per_wr = KRCORE_NUM_SGES_PER_WR;
+        now_info->tx_depth = KRCORE_TX_DEPTH;
+        now_info->rx_depth = KRCORE_RX_DEPTH;
+
+        pr_info("%s: Create success, local QPN:%#06x\n", MODULE_NAME, now_info->qp->qp_num);
     }
-
-    info->sg_offset = 0;
-    if (ib_dma_map_sg(global_device, info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE, DMA_BIDIRECTIONAL) < 0) {
-        pr_err("%s: failed to map sg\n", MODULE_NAME);
-        return -ENOMEM;
-    }
-    // index = 0;
-    // for (;index < 50;index++) {
-    //     struct scatterlist *sg = info->sg + index;
-    //     pr_info("%s: sg[%d] va: %lx page: %p, offset: %d, dma_address: %lx\n", MODULE_NAME, index, info->original_buf + (index * PAGE_SIZE), sg_page(sg), sg->offset, sg->dma_address);
-    // }
-
-    index = ib_map_mr_sg(info->mr, info->sg, KRCORE_ALLOC_SIZE / PAGE_SIZE, &info->sg_offset, PAGE_SIZE);
-    if (index < 0 || index != KRCORE_ALLOC_SIZE / PAGE_SIZE) {
-        pr_err("%s: failed to map mr sg\n", MODULE_NAME);
-        return -ENOMEM;
-    }
-
-    // index = 0;
-    // for (;index < 50;index++) {
-    //     struct scatterlist *sg = info->sg + index;
-    //     pr_info("%s: sg[%d] va: %lx page: %p, offset: %d, dma_address: %lx\n", MODULE_NAME, index, info->original_buf + (index * PAGE_SIZE), sg_page(sg), sg->offset, sg->dma_address);
-    // }
-
-
-    info->local_buf = info->original_buf;
-    info->local_dma_buf = info->sg->dma_address;
-    info->user_local_buf = params.user_buf;
-
-    info->send_cq = ib_create_cq(global_device, NULL, NULL, NULL, &send_cq_attr);
-    info->recv_cq = ib_create_cq(global_device, NULL, NULL, NULL, &recv_cq_attr);
-
-    memset(&qp_init_attr, 0, sizeof(qp_init_attr));
-    qp_init_attr.send_cq = info->send_cq;
-    qp_init_attr.recv_cq = info->recv_cq;
-    qp_init_attr.cap.max_inline_data = 0;
-    qp_init_attr.cap.max_send_wr = KRCORE_TX_DEPTH;
-    qp_init_attr.cap.max_send_sge = KRCORE_NUM_SGES_PER_WR;
-    qp_init_attr.cap.max_recv_wr = KRCORE_RX_DEPTH;
-    qp_init_attr.cap.max_recv_sge = KRCORE_NUM_SGES_PER_WR;
-    qp_init_attr.qp_type = IB_QPT_RC;
-    info->qp = ib_create_qp(info->pd, &qp_init_attr);
-    if (!info->qp) {
-        pr_err("%s: failed to create qp\n", MODULE_NAME);
-        return -ENOMEM;
-    }
-
-    memset(&qp_attr, 0, sizeof(qp_attr));
-    qp_attr.qp_state = IB_QPS_INIT;
-    qp_attr.pkey_index = 0;
-    qp_attr.port_num = 1;
-    qp_attr.qp_access_flags = IB_ACCESS_REMOTE_WRITE | IB_ACCESS_LOCAL_WRITE;
-    if ((ret = ib_modify_qp(info->qp, &qp_attr, flags))) {
-        pr_err("%s: failed to modify qp to init errno: %d\n", MODULE_NAME, ret);
-        return -ENOMEM;
-    }
-
-    ib_query_port(global_device, 1, &port_attr);
-    rdma_query_gid(global_device, 1, KRCORE_RDMA_GID_INDEX, &temp_gid);
-    params.info.lid = port_attr.lid;
-    params.info.gid_index = KRCORE_RDMA_GID_INDEX;
-    params.info.qpn = info->qp->qp_num;
-    params.info.psn = params.info.qpn & 0xffffff;
-    params.info.rkey = info->mr->rkey;
-    params.info.out_reads = 1;
-    params.info.vaddr = info->local_dma_buf;
-    memcpy(params.info.raw_gid, temp_gid.raw, 16);
-
-    if (params.batch_size == 0) {
-        info->num_wrs = KRCORE_NUM_WRS;
-    } else {
-        info->num_wrs = params.batch_size;
-    }
-    info->send_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * info->num_wrs, GFP_KERNEL);
-    info->recv_sge_list = kmalloc(sizeof(struct ib_sge) * KRCORE_NUM_SGES_PER_WR * info->num_wrs, GFP_KERNEL);
-    info->send_wr = kmalloc(sizeof(struct ib_send_wr) * info->num_wrs, GFP_KERNEL);
-    info->recv_wr = kmalloc(sizeof(struct ib_recv_wr) * info->num_wrs, GFP_KERNEL);
-    info->send_wc = kmalloc(sizeof(struct ib_wc) * KRCORE_CQ_POLL_BATCH, GFP_KERNEL);
-    info->recv_wc = kmalloc(sizeof(struct ib_wc) * KRCORE_CQ_POLL_BATCH, GFP_KERNEL);
-    info->num_sges = KRCORE_NUM_SGES_PER_WR * info->num_wrs;
-    info->num_sges_per_wr = KRCORE_NUM_SGES_PER_WR;
-    info->tx_depth = KRCORE_TX_DEPTH;
-    info->rx_depth = KRCORE_RX_DEPTH;
-
-    pr_info("%s: Create success, local QPN:%#06x\n", MODULE_NAME, info->qp->qp_num);
 
     if (copy_to_user(_params, &params, sizeof(params))) {
         pr_err("%s: failed to copy params to user\n", MODULE_NAME);
@@ -419,6 +425,8 @@ static void krcore_init_wr_base_send_recv(krcore_info_t *info) {
 
 static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
     int ret = 0;
+    int qp_index = 0;
+    krcore_info_t *now_info;
     struct ib_qp_attr attr;
     int flags = 0;
 
@@ -427,58 +435,62 @@ static int krcore_init_qp(krcore_info_t *info, void __user *_params) {
         pr_err("%s: failed to copy params from user\n", MODULE_NAME);
         return -EFAULT;
     }
-    flags = IB_QP_STATE;
-    memset(&attr, 0, sizeof(attr));
-    attr.qp_state = IB_QPS_RTR;
-    attr.ah_attr.port_num = 1;
-    attr.ah_attr.ah_flags = IB_AH_GRH; // important
-    attr.ah_attr.sl = 0;//service level default 0
-    memcpy(attr.ah_attr.grh.dgid.raw, params.info.raw_gid, 16);
-    attr.ah_attr.grh.sgid_index = KRCORE_RDMA_GID_INDEX;
-    attr.ah_attr.grh.hop_limit = 0xFF;
-    attr.ah_attr.grh.traffic_class = 0;
-    // TODO maybe need add rdma_ah_attr_type?
-    attr.ah_attr.type = RDMA_AH_ATTR_TYPE_ROCE;
-    memcpy(attr.ah_attr.roce.dmac, params.info.mac, 6);
+    for (;qp_index < params.qp_per_core;qp_index++) {
+        now_info = info + qp_index;
 
-    attr.path_mtu = ilog2(current_mtu / 128);
-    attr.dest_qp_num = params.info.qpn;
-    attr.rq_psn = params.info.psn;
-    flags |= (IB_QP_AV | IB_QP_PATH_MTU | IB_QP_DEST_QPN | IB_QP_RQ_PSN);
+        flags = IB_QP_STATE;
+        memset(&attr, 0, sizeof(attr));
+        attr.qp_state = IB_QPS_RTR;
+        attr.ah_attr.port_num = 1;
+        attr.ah_attr.ah_flags = IB_AH_GRH; // important
+        attr.ah_attr.sl = 0;//service level default 0
+        memcpy(attr.ah_attr.grh.dgid.raw, params.info[qp_index].raw_gid, 16);
+        attr.ah_attr.grh.sgid_index = KRCORE_RDMA_GID_INDEX;
+        attr.ah_attr.grh.hop_limit = 0xFF;
+        attr.ah_attr.grh.traffic_class = 0;
+        // TODO maybe need add rdma_ah_attr_type?
+        attr.ah_attr.type = RDMA_AH_ATTR_TYPE_ROCE;
+        memcpy(attr.ah_attr.roce.dmac, params.info[qp_index].mac, 6);
 
-    attr.max_dest_rd_atomic = params.info.out_reads;
-    attr.min_rnr_timer = KRCORE_MIN_RNR_TIMER;
-    flags |= (IB_QP_MIN_RNR_TIMER | IB_QP_MAX_DEST_RD_ATOMIC);
+        attr.path_mtu = ilog2(current_mtu / 128);
+        attr.dest_qp_num = params.info[qp_index].qpn;
+        attr.rq_psn = params.info[qp_index].psn;
+        flags |= (IB_QP_AV | IB_QP_PATH_MTU | IB_QP_DEST_QPN | IB_QP_RQ_PSN);
 
-    if ((ret = ib_modify_qp(info->qp, &attr, flags))) {
-        pr_err("%s: failed to modify qp to RTR errno: %d\n", MODULE_NAME, ret);
-        return -ENOMEM;
+        attr.max_dest_rd_atomic = params.info[qp_index].out_reads;
+        attr.min_rnr_timer = KRCORE_MIN_RNR_TIMER;
+        flags |= (IB_QP_MIN_RNR_TIMER | IB_QP_MAX_DEST_RD_ATOMIC);
+
+        if ((ret = ib_modify_qp(now_info->qp, &attr, flags))) {
+            pr_err("%s: failed to modify qp to RTR errno: %d\n", MODULE_NAME, ret);
+            return -ENOMEM;
+        }
+
+        flags = IB_QP_STATE;
+        memset(&attr, 0, sizeof(attr));
+        attr.qp_state = IB_QPS_RTS;
+        flags |= IB_QP_SQ_PSN;
+        attr.sq_psn = now_info->qp->qp_num & 0xffffff; // just a hack!
+
+        attr.timeout = KRCORE_DEF_QP_TIME;
+        attr.retry_cnt = 7;
+        attr.rnr_retry = 7;
+        attr.max_rd_atomic = params.info[qp_index].out_reads;
+        flags |= (IB_QP_TIMEOUT | IB_QP_RETRY_CNT | IB_QP_RNR_RETRY | IB_QP_MAX_QP_RD_ATOMIC);
+        if (ib_modify_qp(now_info->qp, &attr, flags)) {
+            pr_err("%s: failed to modify qp to RTS errno: %d\n", MODULE_NAME, ret);
+            return -ENOMEM;
+        }
+
+        now_info->remote_dma_buf = params.info[qp_index].vaddr;
+        now_info->remote_rkey = params.info[qp_index].rkey;
+
+        krcore_init_wr_base_send_recv(now_info);
+
+        krcore_send_reg_mr(now_info);
+
+        pr_info("%s: Connected success, local QPN:%#06x, remote QPN:%#08x\n", MODULE_NAME, now_info->qp->qp_num, params.info[qp_index].qpn);
     }
-
-    flags = IB_QP_STATE;
-    memset(&attr, 0, sizeof(attr));
-    attr.qp_state = IB_QPS_RTS;
-    flags |= IB_QP_SQ_PSN;
-    attr.sq_psn = info->qp->qp_num & 0xffffff; // just a hack!
-
-    attr.timeout = KRCORE_DEF_QP_TIME;
-    attr.retry_cnt = 7;
-    attr.rnr_retry = 7;
-    attr.max_rd_atomic = params.info.out_reads;
-    flags |= (IB_QP_TIMEOUT | IB_QP_RETRY_CNT | IB_QP_RNR_RETRY | IB_QP_MAX_QP_RD_ATOMIC);
-    if (ib_modify_qp(info->qp, &attr, flags)) {
-        pr_err("%s: failed to modify qp to RTS errno: %d\n", MODULE_NAME, ret);
-        return -ENOMEM;
-    }
-
-    info->remote_dma_buf = params.info.vaddr;
-    info->remote_rkey = params.info.rkey;
-
-    krcore_init_wr_base_send_recv(info);
-
-    krcore_send_reg_mr(info);
-
-    pr_info("%s: Connected success, local QPN:%#06x, remote QPN:%#08x\n", MODULE_NAME, info->qp->qp_num, params.info.qpn);
 
     if (copy_to_user(_params, &params, sizeof(params))) {
         pr_err("%s: failed to copy params to user\n", MODULE_NAME);
@@ -497,6 +509,13 @@ static int krcore_post_send(krcore_info_t *info, void __user *_params) {
         pr_err("%s: failed to copy params from user\n", MODULE_NAME);
         return -EFAULT;
     }
+
+    info = info + params.qp_id;
+    if (!info) {
+        pr_err("%s: failed to get qp info\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+
     for (;index < params.batch_size;index++) {
         now_offset = (params.offset + index * params.length) % (KRCORE_ALLOC_SIZE / 2);
         // copy data!
@@ -541,6 +560,12 @@ static int krcore_post_recv(krcore_info_t *info, void __user *_params) {
         return -EFAULT;
     }
 
+    info = info + params.qp_id;
+    if (!info) {
+        pr_err("%s: failed to get qp info\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+
     for (;index < params.batch_size;index++) {
         now_offset = (params.offset + index * params.length) % (KRCORE_ALLOC_SIZE / 2) + (KRCORE_ALLOC_SIZE / 2);
         info->recv_sge_list[index].addr = info->local_dma_buf + now_offset;
@@ -575,6 +600,13 @@ static int krcore_poll_send_cq(krcore_info_t *info, void __user *_params) {
         pr_err("%s: failed to copy params from user\n", MODULE_NAME);
         return -EFAULT;
     }
+
+    info = info + params.qp_id;
+    if (!info) {
+        pr_err("%s: failed to get qp info\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+    
     ne = ib_poll_cq(info->send_cq, min(KRCORE_CQ_POLL_BATCH, params.max_poll_num), info->send_wc);
     if (ne < 0) {
         pr_err("%s: failed to poll send cq\n", MODULE_NAME);
@@ -603,6 +635,13 @@ static int krcore_poll_recv_cq(krcore_info_t *info, void __user *_params) {
         pr_err("%s: failed to copy params from user\n", MODULE_NAME);
         return -EFAULT;
     }
+
+    info = info + params.qp_id;
+    if (!info) {
+        pr_err("%s: failed to get qp info\n", MODULE_NAME);
+        return -ENOMEM;
+    }
+
     ne = ib_poll_cq(info->recv_cq, min(KRCORE_CQ_POLL_BATCH, params.max_poll_num), info->recv_wc);
     if (ne < 0) {
         pr_err("%s: failed to poll recv cq\n", MODULE_NAME);
@@ -631,30 +670,40 @@ static int krcore_poll_recv_cq(krcore_info_t *info, void __user *_params) {
 
 static int krcore_free_qp(krcore_info_t *info, void __user *_params) {
     int ret = 0;
+    krcore_info_t *now_info;
+    int qp_index = 0;
     struct KRCORE_IOC_FREE_QP_PARAMS params;
     if (copy_from_user(&params, _params, sizeof(params))) {
         pr_err("%s: failed to copy params from user\n", MODULE_NAME);
         return -EFAULT;
     }
-    kfree(info->send_sge_list);
-    kfree(info->recv_sge_list);
-    kfree(info->send_wr);
-    kfree(info->recv_wr);
-    kfree(info->send_wc);
-    kfree(info->recv_wc);
-    kfree(info->sg);
 
-    ib_destroy_qp(info->qp);
-    ib_dereg_mr(info->mr);
-    ib_destroy_cq(info->send_cq);
-    ib_destroy_cq(info->recv_cq);
-    ib_dealloc_pd(info->pd);
+    for (;qp_index < params.qp_per_core;qp_index++) {
+        now_info = info + qp_index;
+        if (!now_info) {
+            pr_err("%s: failed to get qp info\n", MODULE_NAME);
+            return -ENOMEM;
+        }
+        kfree(now_info->send_sge_list);
+        kfree(now_info->recv_sge_list);
+        kfree(now_info->send_wr);
+        kfree(now_info->recv_wr);
+        kfree(now_info->send_wc);
+        kfree(now_info->recv_wc);
+        kfree(now_info->sg);
 
-    vfree((void *)info->original_buf);
+        ib_destroy_qp(now_info->qp);
+        ib_dereg_mr(now_info->mr);
+        ib_destroy_cq(now_info->send_cq);
+        ib_destroy_cq(now_info->recv_cq);
+        ib_dealloc_pd(now_info->pd);
 
-    pr_info("%s: Free QP success, local QPN:%#06x\n", MODULE_NAME, info->qp->qp_num);
+        vfree((void *)now_info->original_buf);
 
-    params.success = 1;
+        pr_info("%s: Free QP success, local QPN:%#06x\n", MODULE_NAME, now_info->qp->qp_num);
+    }
+
+    params.success = params.qp_per_core;
     if (copy_to_user(_params, &params, sizeof(params))) {
         pr_err("%s: failed to copy params to user\n", MODULE_NAME);
         return -EFAULT;

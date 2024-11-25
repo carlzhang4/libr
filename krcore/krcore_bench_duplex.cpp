@@ -26,6 +26,7 @@ DEFINE_int32(coreOffset, 0, "coreOffset");
 DEFINE_int32(numaNode, 0, "numaNode");
 DEFINE_int32(port, 6666, "bind_port");
 DEFINE_uint64(batch_size, 1, "requeset batch_size");
+DEFINE_uint64(qp_per_core, 1, "qp per core");
 DEFINE_uint64(outstanding, 32, "outstanding request");
 std::atomic<bool> stop_flag = false;
 unsigned char client_mac[6] = { 0x98,0x03,0x9b,0xca,0x48,0x38 };
@@ -46,13 +47,12 @@ public:
     int sock_port;
 };
 class OffsetHandler {
-private:
+public:
     int max_num;
     int step_size;
     int buf_offset;
     size_t cur;
 
-public:
     OffsetHandler() {
         cur = 0;
     }
@@ -145,20 +145,20 @@ void socket_init(NetParam &net_param) {
         net_param.sockfd[0] = sockfd;
     }
 }
-void exchange_data(NetParam &net_param, PingPongInfo *local_info, PingPongInfo *remote_info) {
-    printf("exchange data size:%ld\n", sizeof(PingPongInfo));
+void exchange_data(NetParam &net_param, PingPongInfo *local_info, PingPongInfo *remote_info, size_t qp_per_core) {
+    printf("exchange data size:%ld\n", sizeof(PingPongInfo) * qp_per_core);
     size_t dummy;
     (void)dummy;
     if (net_param.nodeId == 0) {
         for (int i = 1;i < net_param.numNodes;i++) {
-            dummy = read(net_param.sockfd[i], remote_info, sizeof(PingPongInfo));
+            dummy = read(net_param.sockfd[i], remote_info, sizeof(PingPongInfo) * qp_per_core);
         }
         for (int i = 1;i < net_param.numNodes;i++) {
-            dummy = write(net_param.sockfd[i], local_info, sizeof(PingPongInfo));
+            dummy = write(net_param.sockfd[i], local_info, sizeof(PingPongInfo) * qp_per_core);
         }
     } else {
-        dummy = write(net_param.sockfd[0], local_info, sizeof(PingPongInfo));
-        dummy = read(net_param.sockfd[0], remote_info, sizeof(PingPongInfo));
+        dummy = write(net_param.sockfd[0], local_info, sizeof(PingPongInfo) * qp_per_core);
+        dummy = read(net_param.sockfd[0], remote_info, sizeof(PingPongInfo) * qp_per_core);
     }
 }
 
@@ -213,125 +213,134 @@ void wait_scheduling(int thread_index, std::mutex &IO_LOCK) {
 }
 
 
-void krcore_post_send(int krcore_fd, size_t offset, size_t batch_size, int length) {
+void krcore_post_send(int krcore_fd, size_t offset, int qp_id, size_t batch_size, int length) {
     struct KRCORE_IOC_POST_SEND_PARAMS post_send_params;
+    post_send_params.qp_id = qp_id;
     post_send_params.offset = offset;
     post_send_params.batch_size = batch_size;
     post_send_params.length = length;
     int retcode = ioctl(krcore_fd, KRCORE_IOC_POST_SEND, &post_send_params);
     if (retcode != 0 || post_send_params.success_send_cnt != batch_size) {
-        printf("ioctl KRCORE_IOC_POST_SEND failed\n");
+        printf("qp_id = %d ioctl KRCORE_IOC_POST_SEND failed\n", qp_id);
         exit(1);
     }
 }
 
-void krcore_post_recv(int krcore_fd, size_t offset, size_t batch_size, int length) {
+void krcore_post_recv(int krcore_fd, size_t offset, int qp_id, size_t batch_size, int length) {
     struct KRCORE_IOC_POST_RECV_PARAMS post_recv_params;
+    post_recv_params.qp_id = qp_id;
     post_recv_params.offset = offset;
     post_recv_params.batch_size = batch_size;
     post_recv_params.length = length;
     int retcode = ioctl(krcore_fd, KRCORE_IOC_POST_RECV, &post_recv_params);
     if (retcode != 0 || post_recv_params.success_post_cnt != batch_size) {
-        printf("ioctl KRCORE_IOC_POST_RECV failed\n");
+        printf("qp_id = %d ioctl KRCORE_IOC_POST_RECV failed\n", qp_id);
         exit(1);
     }
 }
 
-void krcore_poll_send_cq(int krcore_fd, int max_poll_num, size_t &actual_poll_num) {
+void krcore_poll_send_cq(int krcore_fd, int max_poll_num, int qp_id, size_t &actual_poll_num) {
     struct KRCORE_IOC_POLL_SEND_CQ_PARAMS poll_send_cq_params;
+    poll_send_cq_params.qp_id = qp_id;
     poll_send_cq_params.max_poll_num = max_poll_num;
     poll_send_cq_params.actual_poll_num = 0;
     int retcode = ioctl(krcore_fd, KRCORE_IOC_POLL_SEND_CQ, &poll_send_cq_params);
     if (retcode != 0) {
-        printf("ioctl KRCORE_IOC_POLL_SEND_CQ failed\n");
+        printf("qp_id = %d ioctl KRCORE_IOC_POLL_SEND_CQ failed\n", qp_id);
         exit(1);
     }
     actual_poll_num = poll_send_cq_params.actual_poll_num;
 }
 
-void krcore_poll_recv_cq(int krcore_fd, int max_poll_num, size_t &actual_poll_num) {
+void krcore_poll_recv_cq(int krcore_fd, int max_poll_num, int qp_id, size_t &actual_poll_num) {
     struct KRCORE_IOC_POLL_RECV_CQ_PARAMS poll_recv_cq_params;
+    poll_recv_cq_params.qp_id = qp_id;
     poll_recv_cq_params.max_poll_num = max_poll_num;
     poll_recv_cq_params.actual_poll_num = 0;
     int retcode = ioctl(krcore_fd, KRCORE_IOC_POLL_RECV_CQ, &poll_recv_cq_params);
     if (retcode != 0) {
-        printf("ioctl KRCORE_IOC_POLL_RECV_CQ failed\n");
+        printf("qp_id = %d ioctl KRCORE_IOC_POLL_RECV_CQ failed\n", qp_id);
         exit(1);
     }
     actual_poll_num = poll_recv_cq_params.actual_poll_num;
 }
 
-void sub_task_server(int thread_index, int krcore_fd, void *user_local_buf) {
+void sub_task_server(int thread_index, int krcore_fd, void **user_local_buf) {
     size_t send_recv_buf_size = KRCORE_ALLOC_SIZE / 2;
 
-    OffsetHandler send(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
-    OffsetHandler send_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
-    OffsetHandler recv(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
-    OffsetHandler recv_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
-
+    OffsetHandler send[KRCORE_MAX_QP_PER_CORE];
+    OffsetHandler send_comp[KRCORE_MAX_QP_PER_CORE];
+    OffsetHandler recv[KRCORE_MAX_QP_PER_CORE];
+    OffsetHandler recv_comp[KRCORE_MAX_QP_PER_CORE];
+    for (size_t i = 0;i < KRCORE_MAX_QP_PER_CORE;i++) {
+        send[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
+        send_comp[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
+        recv[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
+        recv_comp[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
+    }
 
     size_t rx_depth = KRCORE_RX_DEPTH;
 
-    size_t ops = FLAGS_iterations * (send_recv_buf_size / FLAGS_packSize);
-    ops = ROUND_UP(ops, FLAGS_batch_size);
-
-    for (size_t i = 0;i < rx_depth;i++) {
-        krcore_post_recv(krcore_fd, recv.offset(), 1, FLAGS_packSize);
-        recv.step();
+    for (size_t qp_id = 0; qp_id < FLAGS_qp_per_core; qp_id++) {
+        for (size_t i = 0;i < rx_depth;i++) {
+            krcore_post_recv(krcore_fd, recv[qp_id].offset(), qp_id, 1, FLAGS_packSize);
+            recv[qp_id].step();
+        }
     }
 
-    int done = 0;
-    struct timespec begin_time, end_time;
     size_t actual_poll_send_num, actual_poll_recv_num;
-    begin_time.tv_nsec = 0;
-    begin_time.tv_sec = 0;
+    size_t total_finish = 0;
+    while (!stop_flag) {
+        for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
+            krcore_poll_recv_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, qp_id, actual_poll_recv_num);
 
-    while (!done && !stop_flag) {
-        krcore_poll_recv_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_recv_num);
-        if (actual_poll_recv_num != 0 && begin_time.tv_sec == 0) {
-            clock_gettime(CLOCK_MONOTONIC, &begin_time);
-        }
-        for (size_t i = 0;i < actual_poll_recv_num;i++) {
-            if (recv.index() < ops) {
-                if (recv_comp.index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
-                    krcore_post_recv(krcore_fd, recv.offset(), FLAGS_batch_size, FLAGS_packSize);
-                    recv.step(FLAGS_batch_size);
+            for (size_t i = 0;i < actual_poll_recv_num;i++) {
+                if (recv_comp[qp_id].index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
+                    krcore_post_recv(krcore_fd, recv[qp_id].offset(), qp_id, FLAGS_batch_size, FLAGS_packSize);
+                    recv[qp_id].step(FLAGS_batch_size);
+                }
+                recv_comp[qp_id].step();
+            }
+            if (actual_poll_recv_num > 0) {
+                size_t tmp_recv_num = actual_poll_recv_num;
+                while (tmp_recv_num > 0) {
+                    int now_send_num = std::min(tmp_recv_num, FLAGS_batch_size);
+                    krcore_post_send(krcore_fd, send[qp_id].offset(), qp_id, now_send_num, FLAGS_packSize);
+                    send[qp_id].step(now_send_num);
+                    total_finish += now_send_num;
+                    tmp_recv_num -= now_send_num;
                 }
             }
-            recv_comp.step();
-        }
-        if (actual_poll_recv_num > 0) {
-            size_t tmp_recv_num = actual_poll_recv_num;
-            while (tmp_recv_num > 0) {
-                int now_send_num = std::min(tmp_recv_num, FLAGS_batch_size);
-                krcore_post_send(krcore_fd, send.offset(), now_send_num, FLAGS_packSize);
-                send.step(now_send_num);
-                tmp_recv_num -= now_send_num;
+            krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, qp_id, actual_poll_send_num);
+            for (size_t i = 0;i < actual_poll_send_num;i++) {
+                send_comp[qp_id].step();
             }
         }
-        krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_send_num);
-        for (size_t i = 0;i < actual_poll_send_num;i++) {
-            send_comp.step();
-        }
-        if (recv_comp.index() >= ops && send_comp.index() >= ops) {
-            done = 1;
+    }
+
+    for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
+        while (send_comp[qp_id].index() < send[qp_id].index()) {
+            krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, qp_id, actual_poll_send_num);
+            for (size_t i = 0;i < actual_poll_send_num;i++) {
+                send_comp[qp_id].step();
+            }
         }
     }
-    clock_gettime(CLOCK_MONOTONIC, &end_time);
-    double duration = (end_time.tv_sec - begin_time.tv_sec) + (end_time.tv_nsec - begin_time.tv_nsec) / 1e9;
-    double speed = 8.0 * send_comp.index() * FLAGS_packSize / 1000 / 1000 / 1000 / duration;
 
-    std::lock_guard<std::mutex> guard(IO_LOCK);
-    printf("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
 }
 
-void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
+void sub_task_client(int thread_index, int krcore_fd, void **user_local_buf) {
     size_t send_recv_buf_size = KRCORE_ALLOC_SIZE / 2;
-    OffsetHandler send(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
-    OffsetHandler send_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
-    OffsetHandler recv(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
-    OffsetHandler recv_comp(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
-
+    OffsetHandler send[KRCORE_MAX_QP_PER_CORE];
+    OffsetHandler send_comp[KRCORE_MAX_QP_PER_CORE];
+    OffsetHandler recv[KRCORE_MAX_QP_PER_CORE];
+    OffsetHandler recv_comp[KRCORE_MAX_QP_PER_CORE];
+    for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
+        send[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
+        send_comp[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
+        recv[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
+        recv_comp[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
+    }
 
     size_t tx_depth = FLAGS_outstanding;//handler->tx_depth;
     size_t rx_depth = KRCORE_RX_DEPTH;
@@ -339,12 +348,15 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
     size_t ops = FLAGS_iterations * (send_recv_buf_size / FLAGS_packSize);
     ops = ROUND_UP(ops, FLAGS_batch_size);
 
-    std::vector<size_t>timers(128);
-    size_t timer_head = 0, timer_tail = 0;
+    std::vector<std::vector<size_t>>timers(FLAGS_qp_per_core, std::vector<size_t>(128, 0));
+    std::vector<size_t>timer_head(FLAGS_qp_per_core);
+    std::vector<size_t>timer_tail(FLAGS_qp_per_core);
 
-    for (size_t i = 0;i < rx_depth;i++) {
-        krcore_post_recv(krcore_fd, recv.offset(), 1, FLAGS_packSize);
-        recv.step();
+    for (size_t qp_id = 0; qp_id < FLAGS_qp_per_core; qp_id++) {
+        for (size_t i = 0;i < rx_depth;i++) {
+            krcore_post_recv(krcore_fd, recv[qp_id].offset(), qp_id, 1, FLAGS_packSize);
+            recv[qp_id].step();
+        }
     }
 
     send_sync++;
@@ -352,10 +364,12 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
     }
 
     for (size_t i = 0;i < tx_depth;i++) {
-        krcore_post_send(krcore_fd, send.offset(), 1, FLAGS_packSize);
-        timers[timer_head] = get_tsc();
-        timer_head = (timer_head + 1) % 128;
-        send.step();
+        for (size_t qp_id = 0; qp_id < FLAGS_qp_per_core;qp_id++) {
+            krcore_post_send(krcore_fd, send[qp_id].offset(), qp_id, 1, FLAGS_packSize);
+            timers[qp_id][timer_head[qp_id]] = get_tsc();
+            timer_head[qp_id] = (timer_head[qp_id] + 1) % 128;
+            send[qp_id].step();
+        }
     }
 
     int done = 0;
@@ -364,52 +378,66 @@ void sub_task_client(int thread_index, int krcore_fd, void *user_local_buf) {
     begin_time.tv_nsec = 0;
     begin_time.tv_sec = 0;
 
+    size_t total_finish = 0;
+
     while (!done && !stop_flag) {
-        krcore_poll_recv_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_recv_num);
-        if (actual_poll_recv_num != 0 && begin_time.tv_sec == 0) {
-            clock_gettime(CLOCK_MONOTONIC, &begin_time);
-        }
-        for (size_t i = 0;i < actual_poll_recv_num;i++) {
-            hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
-            // printf("recv_comp:%ld\n", recv_comp.index());
-            timer_tail = (timer_tail + 1) % 128;
-        }
-        for (size_t i = 0;i < actual_poll_recv_num;i++) {
-            if (recv.index() < ops) {
-                if (recv_comp.index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
-                    krcore_post_recv(krcore_fd, recv.offset(), FLAGS_batch_size, FLAGS_packSize);
-                    recv.step(FLAGS_batch_size);
+        for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
+            krcore_poll_recv_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, qp_id, actual_poll_recv_num);
+            if (actual_poll_recv_num != 0 && begin_time.tv_sec == 0) {
+                clock_gettime(CLOCK_MONOTONIC, &begin_time);
+            }
+            for (size_t i = 0;i < actual_poll_recv_num;i++) {
+                hdr_record_value_atomic(latency_hist, (get_tsc() - timers[qp_id][timer_tail[qp_id]]) * 10);
+                // printf("recv_comp:%ld\n", recv_comp[qp_id].index());
+                timer_tail[qp_id] = (timer_tail[qp_id] + 1) % 128;
+            }
+            for (size_t i = 0;i < actual_poll_recv_num;i++) {
+                if (recv[qp_id].index() < ops) {
+                    if (recv_comp[qp_id].index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
+                        krcore_post_recv(krcore_fd, recv[qp_id].offset(), qp_id, FLAGS_batch_size, FLAGS_packSize);
+                        recv[qp_id].step(FLAGS_batch_size);
+                    }
+                }
+                recv_comp[qp_id].step();
+                total_finish++;
+            }
+
+            krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, qp_id, actual_poll_send_num);
+            for (size_t i = 0;i < actual_poll_send_num;i++) {
+                send_comp[qp_id].step();
+            }
+
+            if (send[qp_id].index() < ops && send[qp_id].index() - recv_comp[qp_id].index() < tx_depth) {
+                size_t now_send_num = std::min(ops - send[qp_id].index(), tx_depth - (send[qp_id].index() - recv_comp[qp_id].index()));
+                while (now_send_num > 0) {
+                    size_t tmp_send_num = std::min(now_send_num, FLAGS_batch_size);
+                    krcore_post_send(krcore_fd, send[qp_id].offset(), qp_id, tmp_send_num, FLAGS_packSize);
+                    for (size_t i = 0;i < tmp_send_num;i++) {
+                        timers[qp_id][timer_head[qp_id]] = get_tsc();
+                        timer_head[qp_id] = (timer_head[qp_id] + 1) % 128;
+                    }
+                    send[qp_id].step(tmp_send_num);
+                    now_send_num -= tmp_send_num;
                 }
             }
-            recv_comp.step();
-        }
 
-        krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, actual_poll_send_num);
-        for (size_t i = 0;i < actual_poll_send_num;i++) {
-            send_comp.step();
-        }
-
-        if (send.index() < ops && send.index() - recv_comp.index() < tx_depth) {
-            size_t now_send_num = std::min(ops - send.index(), tx_depth - (send.index() - recv_comp.index()));
-            while (now_send_num > 0) {
-                size_t tmp_send_num = std::min(now_send_num, FLAGS_batch_size);
-                krcore_post_send(krcore_fd, send.offset(), tmp_send_num, FLAGS_packSize);
-                for (size_t i = 0;i < tmp_send_num;i++) {
-                    timers[timer_head] = get_tsc();
-                    timer_head = (timer_head + 1) % 128;
-                }
-                send.step(tmp_send_num);
-                now_send_num -= tmp_send_num;
+            if (total_finish >= ops) {
+                done = 1;
             }
-        }
-
-        if (recv_comp.index() >= ops && send_comp.index() >= ops) {
-            done = 1;
         }
     }
     clock_gettime(CLOCK_MONOTONIC, &end_time);
     double duration = (end_time.tv_sec - begin_time.tv_sec) + (end_time.tv_nsec - begin_time.tv_nsec) / 1e9;
-    double speed = 8.0 * send_comp.index() * FLAGS_packSize / 1000 / 1000 / 1000 / duration;
+    double speed = 8.0 * total_finish * FLAGS_packSize / 1000 / 1000 / 1000 / duration;
+
+    for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
+        while (!stop_flag && send_comp[qp_id].index() < send[qp_id].index()) {
+            krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, qp_id, actual_poll_send_num);
+            for (size_t i = 0;i < actual_poll_send_num;i++) {
+                send_comp[qp_id].step();
+            }
+        }
+    }
 
     std::lock_guard<std::mutex> guard(IO_LOCK);
     printf("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs\n", thread_index, duration, speed);
@@ -426,14 +454,21 @@ void sub_task(int thread_index) {
     net_param.sock_port = FLAGS_port + thread_index;
     socket_init(net_param);
 
-    void *user_local_buf = malloc(KRCORE_ALLOC_SIZE);
+
+    void *user_local_buf[KRCORE_MAX_QP_PER_CORE];
+    for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
+        user_local_buf[i] = malloc(KRCORE_ALLOC_SIZE);
+    }
     int fd = open(krcoreinode, O_RDWR | O_CLOEXEC);
     if (fd == -1) {
         printf("thread %d open %s failed\n", thread_index, krcoreinode);
     }
 
     struct KRCORE_IOC_CREATE_QP_PARAMS create_qp_params;
-    create_qp_params.user_buf = reinterpret_cast<size_t>(user_local_buf);
+    create_qp_params.qp_per_core = FLAGS_qp_per_core;
+    for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
+        create_qp_params.user_buf[i] = reinterpret_cast<size_t>(user_local_buf[i]);
+    }
     create_qp_params.batch_size = FLAGS_batch_size;
     int retcode = ioctl(fd, KRCORE_IOC_CREATE_QP, &create_qp_params);
     if (retcode != 0) {
@@ -441,13 +476,17 @@ void sub_task(int thread_index) {
     }
 
     struct KRCORE_IOC_INIT_QP_PARAMS init_qp_params;
+    init_qp_params.qp_per_core = FLAGS_qp_per_core;
     if (FLAGS_nodeId == 0) {
-        memcpy(create_qp_params.info.mac, server_mac, 6);
+        for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
+            memcpy(create_qp_params.info[i].mac, server_mac, 6);
+        }
     } else {
-        memcpy(create_qp_params.info.mac, client_mac, 6);
+        for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
+            memcpy(create_qp_params.info[i].mac, client_mac, 6);
+        }
     }
-    exchange_data(net_param, &create_qp_params.info, &init_qp_params.info);
-    printf("local qpn = %d remote qpn = %d\n", create_qp_params.info.qpn, init_qp_params.info.qpn);
+    exchange_data(net_param, create_qp_params.info, init_qp_params.info, FLAGS_qp_per_core);
     retcode = ioctl(fd, KRCORE_IOC_INIT_QP, &init_qp_params);
     if (retcode != 0) {
         printf("thread %d ioctl KRCORE_IOC_INIT_QP %s failed\n", thread_index, krcoreinode);
@@ -460,12 +499,15 @@ void sub_task(int thread_index) {
     }
 
     struct KRCORE_IOC_FREE_QP_PARAMS free_qp_params;
+    free_qp_params.qp_per_core = FLAGS_qp_per_core;
     retcode = ioctl(fd, KRCORE_IOC_FREE_QP, &free_qp_params);
-    if (retcode != 0 || free_qp_params.success != 1) {
+    if (retcode != 0 || free_qp_params.success != FLAGS_qp_per_core) {
         printf("thread %d ioctl KRCORE_IOC_FREE_QP %s failed\n", thread_index, krcoreinode);
     }
 
-    free(user_local_buf);
+    for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
+        free((void *)user_local_buf[i]);
+    }
 
     close(fd);
 }
