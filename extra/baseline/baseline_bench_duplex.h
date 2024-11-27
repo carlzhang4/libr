@@ -1,0 +1,10 @@
+#ifndef __BASELINE_H__
+#define __BASELINE_H__
+
+#define BASELINE_ALLOC_SIZE 16*1024*1024
+#define BASELINE_MAX_QP_PER_CORE 8
+
+#define BASELINE_TX_DEPTH 256
+#define BASELINE_RX_DEPTH 256
+
+#endif
