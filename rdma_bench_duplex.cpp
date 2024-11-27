@@ -24,7 +24,7 @@ string DEVICE_NAME;
 int GID_INDEX;
 int NUMA_NODE;
 int BATCH_SIZE = 1;
-int OUTSTANDING = 48;
+int OUTSTANDING = 32;
 std::atomic<bool> stop_flag = false;
 
 void ctrl_c_handler(int) { stop_flag = true; }
@@ -197,7 +197,7 @@ void benchmark(NetParam &net_param) {
     }
 
     for (int i = 0;i < NUM_THREADS;i++) {
-        qp_handlers[i] = create_qp_rc(net_param, bufs[i], BUF_SIZE, info + i);
+        qp_handlers[i] = create_qp_rc(net_param, bufs[i], BUF_SIZE, info + i, i);
     }
     exchange_data(net_param, reinterpret_cast<char *>(info), sizeof(PingPongInfo) * NUM_THREADS);
     int my_id = net_param.nodeId;

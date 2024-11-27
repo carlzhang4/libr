@@ -176,8 +176,7 @@ void roce_init(NetParam &net_param, int num_contexts) {
 	srand48(getpid() * time(NULL));
 }
 
-QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct PingPongInfo *info) {
-	static int context_index = 0;
+QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct PingPongInfo *info, int context_index) {
 	assert(context_index < net_param.num_contexts);
 	QpHandler *qp_handler;
 	ALLOCATE(qp_handler, QpHandler, 1);
@@ -290,8 +289,7 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	return qp_handler;
 }
 
-QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct PingPongInfo *info) {
-	static int context_index = 0;
+QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct PingPongInfo *info, int context_index) {
 	assert(context_index < net_param.num_contexts);
 	QpHandler *qp_handler;
 	ALLOCATE(qp_handler, QpHandler, 1);

@@ -26,7 +26,7 @@ int NUMA_NODE;
 int BATCH_SIZE = 1;
 int OUTSTANDING = 48;
 std::atomic<bool> stop_flag = false;
-volatile double total_bw = 0;
+std::atomic<double> total_bw = 0;
 void ctrl_c_handler(int) { stop_flag = true; }
 
 hdr_histogram *latency_hist = nullptr;
@@ -77,7 +77,7 @@ void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops
 	double speed = 8.0 * ops * PACK_SIZE / 1000 / 1000 / 1000 / duration;
 
 	std::lock_guard<std::mutex> guard(IO_LOCK);
-	total_bw += speed;
+	total_bw = total_bw + speed;
 	LOG_I("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
 
 	free(wc_recv);
@@ -138,7 +138,7 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
 	double speed = 8.0 * send_comp.index() * PACK_SIZE / 1000 / 1000 / 1000 / duration;
 
 	std::lock_guard<std::mutex> guard(IO_LOCK);
-	total_bw += speed;
+	total_bw = total_bw + speed;
 	LOG_I("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
 
 	free(wc_send);
@@ -164,7 +164,7 @@ void benchmark(NetParam &net_param) {
 	}
 
 	for (int i = 0;i < NUM_THREADS;i++) {
-		qp_handlers[i] = create_qp_rc(net_param, bufs[i], BUF_SIZE, info + i);
+		qp_handlers[i] = create_qp_rc(net_param, bufs[i], BUF_SIZE, info + i, i);
 	}
 	exchange_data(net_param, reinterpret_cast<char *>(info), sizeof(PingPongInfo) * NUM_THREADS);
 	int my_id = net_param.nodeId;
@@ -189,7 +189,7 @@ void benchmark(NetParam &net_param) {
 		threads[i].join();
 	}
 	clock_gettime(CLOCK_MONOTONIC, &end_timer);
-	printf("Total bandwidth: %f Gbps\n", total_bw);
+	printf("Total bandwidth: %f Gbps\n", total_bw.load());
 	for (int i = 0;i < NUM_THREADS;i++) {
 		free(qp_handlers[i]->send_sge_list);
 		free(qp_handlers[i]->recv_sge_list);

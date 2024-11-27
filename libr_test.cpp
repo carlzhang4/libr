@@ -118,7 +118,7 @@ void rc_send_recv_benchmark_multi_qps(NetParam &net_param, int is_same_addr, siz
 	}
 
 	for (int i = 0;i < num_threads;i++) {
-		qp_handlers[i] = create_qp_rc(net_param, bufs[i], buf_size, info + i);
+		qp_handlers[i] = create_qp_rc(net_param, bufs[i], buf_size, info + i, i);
 	}
 	exchange_data(net_param, reinterpret_cast<char *>(info), sizeof(PingPongInfo) * num_threads);
 	for (int i = 0;i < net_param.numNodes * num_threads;i++) {
@@ -162,7 +162,7 @@ void rc_send_recv_benchmark_single_qp(NetParam &net_param, int is_same_addr, int
 	PingPongInfo *info = new PingPongInfo[net_param.numNodes]();
 
 	void *buf = memalign(net_param.page_size, buf_size);
-	QpHandler *handler = create_qp_rc(net_param, buf, buf_size, info);
+	QpHandler *handler = create_qp_rc(net_param, buf, buf_size, info, 0);
 	exchange_data(net_param, reinterpret_cast<char *>(info), sizeof(PingPongInfo));
 	for (int i = 0;i < net_param.numNodes;i++) {
 		print_pingpong_info(info + i);
@@ -276,7 +276,7 @@ void rc_send_recv_test(NetParam &net_param, int num_qps) {
 
 	QpHandler **handler = new QpHandler * [num_qps]();
 	for (int i = 0;i < num_qps;i++) {
-		handler[i] = create_qp_rc(net_param, buf, buf_size, infos[0] + i);
+		handler[i] = create_qp_rc(net_param, buf, buf_size, infos[0] + i, i);
 	}
 	exchange_data(net_param, reinterpret_cast<char *> (info), sizeof(PingPongInfo) * num_qps);
 	for (int i = 0;i < net_param.numNodes * num_qps;i++) {

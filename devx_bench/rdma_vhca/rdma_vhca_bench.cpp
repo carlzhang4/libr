@@ -157,7 +157,7 @@ void benchmark(NetParam &net_param) {
     if (resources != nullptr) {
         // use vhca memory region
         for (int i = 0;i < NUM_THREADS;i++) {
-            qp_handlers[i] = create_qp_rc(net_param, resources + i, info + i);
+            qp_handlers[i] = create_qp_rc(net_param, resources + i, info + i, i);
         }
     } else {
         // use common memory 
@@ -169,7 +169,7 @@ void benchmark(NetParam &net_param) {
             }
         }
         for (int i = 0;i < NUM_THREADS;i++) {
-            qp_handlers[i] = create_qp_rc(net_param, bufs[i], BUF_SIZE, info + i);
+            qp_handlers[i] = create_qp_rc(net_param, bufs[i], BUF_SIZE, info + i, i);
         }
     }
 

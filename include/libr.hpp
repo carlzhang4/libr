@@ -63,11 +63,11 @@ void get_opt(NetParam &net_param, int argc, char *argv[]);
 
 void roce_init(NetParam &net_param, int num_contexts = 1);
 
-QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct PingPongInfo *info);
+QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct PingPongInfo *info, int context_index);
 
 void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongInfo *info, struct PingPongInfo *my_info);
 
-QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct PingPongInfo *info);
+QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct PingPongInfo *info, int context_index);
 
 void print_pingpong_info(struct PingPongInfo *info);
 

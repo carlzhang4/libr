@@ -217,7 +217,7 @@ void benchmark(NetParam &net_param) {
     }
 
     for (int i = 0;i < NUM_THREADS;i++) {
-        qp_handlers[i] = create_qp_rc(net_param, bufs[i], BUF_SIZE, info + i);
+        qp_handlers[i] = create_qp_rc(net_param, bufs[i], BUF_SIZE, info + i, i);
         // qp_handlers[i]->pd is local memory region
         // resources[i].mr is vhca memory region
         resources[i].mr = devx_create_crossing_mr(qp_handlers[i]->pd, resources[i].addr, resources[i].size, resources[i].vhca_id, resources[i].mkey, access_key, sizeof(access_key));
