@@ -92,7 +92,7 @@ void sub_task_server(int thread_index, QpHandler **handler) {
     list[list.size() / 2].next = &list[0];
 
     ListNode *now_head = &list[0];
-    size_t traverse_num = 15;
+    size_t traverse_num = 8;
     while (!stop_flag) {
         for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
             ne_recv = poll_recv_cq(*(handler[qp_id]), wc_recv);
