@@ -63,9 +63,9 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/HdrHistogram_c)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_vhca)
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/dma_copy)
+# add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/dma_copy)
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rpcacc_micro)
+# add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rpcacc_micro)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_split_send)
 

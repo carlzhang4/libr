@@ -11,8 +11,7 @@
 #include "libr.hpp"
 #include <hdr/hdr_histogram.h>
 
-#include "baseline_bench_duplex.h"
-
+#include "freeflow_bench_duplex.h"
 
 DEFINE_int32(iterations, 1000, "iterations");
 DEFINE_int32(packSize, 1024, "packSize");
@@ -38,19 +37,31 @@ std::atomic<double> total_bw = 0;
 
 #define ROUND_UP(value, alignment) (((value) + (alignment) - 1) & ~((alignment) - 1))
 
+const auto kPageSize = 4096;
+struct ListNode {
+    ListNode *next;
+    std::byte padding[kPageSize];
+};
+
 void sub_task_server(int thread_index, QpHandler **handler) {
-    size_t send_recv_buf_size = BASELINE_ALLOC_SIZE / 2;
+    size_t send_recv_buf_size = FREEFLOW_ALLOC_SIZE / 2;
 
     struct ibv_wc *wc_send = NULL;
     struct ibv_wc *wc_recv = NULL;
     ALLOCATE(wc_send, struct ibv_wc, CTX_POLL_BATCH);
     ALLOCATE(wc_recv, struct ibv_wc, CTX_POLL_BATCH);
 
-    OffsetHandler send[BASELINE_MAX_QP_PER_CORE];
-    OffsetHandler send_comp[BASELINE_MAX_QP_PER_CORE];
-    OffsetHandler recv[BASELINE_MAX_QP_PER_CORE];
-    OffsetHandler recv_comp[BASELINE_MAX_QP_PER_CORE];
-    for (size_t i = 0;i < BASELINE_MAX_QP_PER_CORE;i++) {
+    OffsetHandler send[FREEFLOW_MAX_QP_PER_CORE];
+    OffsetHandler send_comp[FREEFLOW_MAX_QP_PER_CORE];
+    OffsetHandler recv[FREEFLOW_MAX_QP_PER_CORE];
+    OffsetHandler recv_comp[FREEFLOW_MAX_QP_PER_CORE];
+
+    void **copy_bufs = new void *[FLAGS_qp_per_core];
+    for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
+        copy_bufs[i] = malloc(FREEFLOW_ALLOC_SIZE);
+    }
+
+    for (size_t i = 0;i < FREEFLOW_MAX_QP_PER_CORE;i++) {
         send[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
         send_comp[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, 0);
         recv[i].init(send_recv_buf_size / FLAGS_packSize, FLAGS_packSize, send_recv_buf_size);
@@ -70,6 +81,18 @@ void sub_task_server(int thread_index, QpHandler **handler) {
     size_t ne_send;
     size_t ne_recv;
 
+    size_t num_nodes = 128 * 1024 * 1024 / (64);
+    std::vector<ListNode> list(num_nodes);
+    for (size_t i = 0;i < list.size() / 2;i++) {
+        list[i].next = &list[list.size() - 1 - i];
+    }
+    for (size_t i = list.size() / 2 + 1;i < list.size();i++) {
+        list[i].next = &list[list.size() - i];
+    }
+    list[list.size() / 2].next = &list[0];
+
+    ListNode *now_head = &list[0];
+    size_t traverse_num = 15;
     while (!stop_flag) {
         for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
             ne_recv = poll_recv_cq(*(handler[qp_id]), wc_recv);
@@ -80,6 +103,17 @@ void sub_task_server(int thread_index, QpHandler **handler) {
                     recv[qp_id].step(FLAGS_batch_size);
                 }
                 assert(wc_recv[i].status == IBV_WC_SUCCESS);
+
+                {
+                    memcpy(copy_bufs[qp_id] + wc_recv[i].wr_id, reinterpret_cast<void *>(handler[qp_id]->buf + wc_recv[i].wr_id), wc_recv[i].byte_len);
+                    memcpy(copy_bufs[qp_id] + send_recv_buf_size, wc_recv + i, sizeof(struct ibv_wc));
+                    size_t now_traverse_num = traverse_num;
+                    while (now_traverse_num > 0) {
+                        now_head = now_head->next;
+                        now_traverse_num--;
+                    }
+                }
+
                 recv_comp[qp_id].step();
             }
             if (ne_recv > 0) {
@@ -90,6 +124,15 @@ void sub_task_server(int thread_index, QpHandler **handler) {
                     send[qp_id].step(now_send_num);
                     total_finish += now_send_num;
                     tmp_recv_num -= now_send_num;
+
+                    {
+                        memcpy(copy_bufs[qp_id], handler[qp_id]->send_wr, sizeof(struct ibv_send_wr) * now_send_num);
+                        size_t now_traverse_num = traverse_num;
+                        while (now_traverse_num > 0) {
+                            now_head = now_head->next;
+                            now_traverse_num--;
+                        }
+                    }
                 }
             }
             ne_send = poll_send_cq(*(handler[qp_id]), wc_send);
@@ -112,14 +155,17 @@ void sub_task_server(int thread_index, QpHandler **handler) {
 
     free(wc_send);
     free(wc_recv);
+    for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
+        free(copy_bufs[i]);
+    }
 }
 
 void sub_task_client(int thread_index, QpHandler **handler) {
-    size_t send_recv_buf_size = BASELINE_ALLOC_SIZE / 2;
-    OffsetHandler send[BASELINE_MAX_QP_PER_CORE];
-    OffsetHandler send_comp[BASELINE_MAX_QP_PER_CORE];
-    OffsetHandler recv[BASELINE_MAX_QP_PER_CORE];
-    OffsetHandler recv_comp[BASELINE_MAX_QP_PER_CORE];
+    size_t send_recv_buf_size = FREEFLOW_ALLOC_SIZE / 2;
+    OffsetHandler send[FREEFLOW_MAX_QP_PER_CORE];
+    OffsetHandler send_comp[FREEFLOW_MAX_QP_PER_CORE];
+    OffsetHandler recv[FREEFLOW_MAX_QP_PER_CORE];
+    OffsetHandler recv_comp[FREEFLOW_MAX_QP_PER_CORE];
 
     struct ibv_wc *wc_send = NULL;
     struct ibv_wc *wc_recv = NULL;
@@ -238,6 +284,7 @@ void sub_task_client(int thread_index, QpHandler **handler) {
     std::lock_guard<std::mutex> guard(IO_LOCK);
     printf("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs\n", thread_index, duration, speed);
     total_bw = total_bw + speed;
+
     free(wc_send);
     free(wc_recv);
 }
@@ -268,14 +315,15 @@ void sub_task(int thread_index) {
     QpHandler **qp_handlers = new QpHandler * [FLAGS_qp_per_core]();
 
     for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
-        bufs[i] = malloc_2m_numa(BASELINE_ALLOC_SIZE, net_param.numa_node);
-        for (int j = 0;j < BASELINE_ALLOC_SIZE / static_cast<int>(sizeof(int));j++) {
+        // bufs[i] = malloc_2m_numa(FREEFLOW_ALLOC_SIZE, net_param.numa_node);
+        bufs[i] = aligned_alloc(net_param.page_size, FREEFLOW_ALLOC_SIZE);
+        for (int j = 0;j < FREEFLOW_ALLOC_SIZE / static_cast<int>(sizeof(int));j++) {
             (reinterpret_cast<int **> (bufs))[i][j] = 0;
         }
     }
 
     for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
-        qp_handlers[i] = create_qp_rc(net_param, bufs[i], BASELINE_ALLOC_SIZE, info + i, i);
+        qp_handlers[i] = create_qp_rc(net_param, bufs[i], FREEFLOW_ALLOC_SIZE, info + i, i);
     }
     exchange_data(net_param, reinterpret_cast<char *>(info), sizeof(PingPongInfo) * FLAGS_qp_per_core);
     int my_id = net_param.nodeId;
@@ -331,21 +379,20 @@ int main(int argc, char *argv[]) {
 
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
-    assert(FLAGS_qp_per_core <= BASELINE_MAX_QP_PER_CORE);
-
     if (FLAGS_nodeId != 0) {
         hdr_init(1000, 50000000, 3, &latency_hist);
     }
+    assert(FLAGS_qp_per_core <= FREEFLOW_MAX_QP_PER_CORE);
 
     if (FLAGS_batch_size != 1) {
         printf("TODO....\n");
         exit(0);
     }
     benchmark();
-
     if (FLAGS_nodeId != 0) {
         printf("Total throughput: %f Gbps\n", total_bw.load());
     }
+
     // if (FLAGS_nodeId != 0) {
     //     hdr_percentiles_print(latency_hist, stdout, 5, 10 * get_tsc_freq_per_ns(), CLASSIC);
     //     hdr_close(latency_hist);
