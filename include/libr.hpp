@@ -49,6 +49,8 @@ static size_t get_tsc() {
 
 #define CTX_POLL_BATCH		(16)
 
+#define SEND_CQ_BATCH (32)
+
 #define INFO_FMT "LID %#04x QPN %#06x PSN %#08x RKey %#08x VAddr %#016llx  %s: %02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d"
 
 const char *transport_type_str(enum ibv_transport_type t);
@@ -73,9 +75,11 @@ void print_pingpong_info(struct PingPongInfo *info);
 
 void post_send(QpHandler &qp_handler, size_t offset, int length);
 
-void post_send_batch(QpHandler &qp_handler, int batch_size, size_t offset, int length);
+void post_send_batch(QpHandler &qp_handler, int batch_size, OffsetHandler &handler, int length);
 
 void post_recv(QpHandler &qp_handler, size_t offset, int length);
+
+void post_recv_batch(QpHandler &qp_handler, int batch_size, OffsetHandler &handler, int length);
 
 int poll_send_cq(QpHandler &qp_handler, struct ibv_wc *wc);
 

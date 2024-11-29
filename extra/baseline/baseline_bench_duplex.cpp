@@ -66,49 +66,43 @@ void sub_task_server(int thread_index, QpHandler **handler) {
         }
     }
 
-    size_t total_finish = 0;
     size_t ne_send;
     size_t ne_recv;
+    size_t batch_size = FLAGS_batch_size;
 
     while (!stop_flag) {
         for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
             ne_recv = poll_recv_cq(*(handler[qp_id]), wc_recv);
 
             for (size_t i = 0;i < ne_recv;i++) {
-                if (recv_comp[qp_id].index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
-                    post_recv(*(handler[qp_id]), recv[qp_id].offset(), FLAGS_packSize);
-                    recv[qp_id].step(FLAGS_batch_size);
-                }
                 assert(wc_recv[i].status == IBV_WC_SUCCESS);
                 recv_comp[qp_id].step();
-            }
-            if (ne_recv > 0) {
-                size_t tmp_recv_num = ne_recv;
-                while (tmp_recv_num > 0) {
-                    int now_send_num = std::min(tmp_recv_num, FLAGS_batch_size);
-                    post_send(*(handler[qp_id]), send[qp_id].offset(), FLAGS_packSize);
-                    send[qp_id].step(now_send_num);
-                    total_finish += now_send_num;
-                    tmp_recv_num -= now_send_num;
+                if (recv_comp[qp_id].index() % batch_size == 0) {
+                    post_recv_batch(*(handler[qp_id]), batch_size, recv[qp_id], FLAGS_packSize);
                 }
             }
+
+            if (recv_comp[qp_id].index() - send[qp_id].index() >= batch_size) {
+                post_send_batch(*(handler[qp_id]), batch_size, send[qp_id], FLAGS_packSize);
+            }
+
             ne_send = poll_send_cq(*(handler[qp_id]), wc_send);
             for (size_t i = 0;i < ne_send;i++) {
                 assert(wc_send[i].status == IBV_WC_SUCCESS);
-                send_comp[qp_id].step();
+                send_comp[qp_id].step(SEND_CQ_BATCH);
             }
         }
     }
 
-    for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
-        while (send_comp[qp_id].index() < send[qp_id].index()) {
-            ne_send = poll_send_cq(*(handler[qp_id]), wc_send);
-            for (size_t i = 0;i < ne_send;i++) {
-                assert(wc_send[i].status == IBV_WC_SUCCESS);
-                send_comp[qp_id].step();
-            }
-        }
-    }
+    // for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
+    //     while (send_comp[qp_id].index() < send[qp_id].index()) {
+    //         ne_send = poll_send_cq(*(handler[qp_id]), wc_send);
+    //         for (size_t i = 0;i < ne_send;i++) {
+    //             assert(wc_send[i].status == IBV_WC_SUCCESS);
+    //             send_comp[qp_id].step(SEND_CQ_BATCH);
+    //         }
+    //     }
+    // }
 
     free(wc_send);
     free(wc_recv);
@@ -138,6 +132,7 @@ void sub_task_client(int thread_index, QpHandler **handler) {
 
     size_t ops = FLAGS_iterations * (send_recv_buf_size / FLAGS_packSize);
     ops = ROUND_UP(ops, FLAGS_batch_size);
+    ops = ROUND_UP(ops, SEND_CQ_BATCH);
 
     std::vector<std::vector<size_t>>timers(FLAGS_qp_per_core, std::vector<size_t>(128, 0));
     std::vector<size_t>timer_head(FLAGS_qp_per_core);
@@ -145,8 +140,7 @@ void sub_task_client(int thread_index, QpHandler **handler) {
 
     for (size_t qp_id = 0; qp_id < FLAGS_qp_per_core; qp_id++) {
         for (size_t i = 0;i < rx_depth;i++) {
-            post_recv(*(handler[qp_id]), recv[qp_id].offset(), FLAGS_packSize);
-            recv[qp_id].step();
+            post_recv_batch(*(handler[qp_id]), 1, recv[qp_id], FLAGS_packSize);
         }
     }
 
@@ -156,10 +150,9 @@ void sub_task_client(int thread_index, QpHandler **handler) {
 
     for (size_t i = 0;i < tx_depth;i++) {
         for (size_t qp_id = 0; qp_id < FLAGS_qp_per_core;qp_id++) {
-            post_send(*(handler[qp_id]), send[qp_id].offset(), FLAGS_packSize);
-            timers[qp_id][timer_head[qp_id]] = get_tsc();
-            timer_head[qp_id] = (timer_head[qp_id] + 1) % 128;
-            send[qp_id].step();
+            post_send_batch(*(handler[qp_id]), 1, send[qp_id], FLAGS_packSize);
+            // timers[qp_id][timer_head[qp_id]] = get_tsc();
+            // timer_head[qp_id] = (timer_head[qp_id] + 1) % 128;
         }
     }
 
@@ -172,6 +165,8 @@ void sub_task_client(int thread_index, QpHandler **handler) {
     size_t ne_send;
     size_t ne_recv;
 
+    size_t batch_size = FLAGS_batch_size;
+
     while (!done && !stop_flag) {
         for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
             ne_recv = poll_recv_cq(*(handler[qp_id]), wc_recv);
@@ -181,15 +176,14 @@ void sub_task_client(int thread_index, QpHandler **handler) {
             }
             for (size_t i = 0;i < ne_recv;i++) {
                 assert(wc_recv[i].status == IBV_WC_SUCCESS);
-                hdr_record_value_atomic(latency_hist, (get_tsc() - timers[qp_id][timer_tail[qp_id]]) * 10);
+                // hdr_record_value_atomic(latency_hist, (get_tsc() - timers[qp_id][timer_tail[qp_id]]) * 10);
                 // printf("recv_comp:%ld\n", recv_comp[qp_id].index());
-                timer_tail[qp_id] = (timer_tail[qp_id] + 1) % 128;
+                // timer_tail[qp_id] = (timer_tail[qp_id] + 1) % 128;
             }
             for (size_t i = 0;i < ne_recv;i++) {
                 if (recv[qp_id].index() < ops) {
-                    if (recv_comp[qp_id].index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
-                        post_recv(*(handler[qp_id]), recv[qp_id].offset(), FLAGS_packSize);
-                        recv[qp_id].step(FLAGS_batch_size);
+                    if (recv_comp[qp_id].index() % batch_size == batch_size - 1) {
+                        post_recv_batch(*(handler[qp_id]), batch_size, recv[qp_id], FLAGS_packSize);
                     }
                 }
                 recv_comp[qp_id].step();
@@ -199,21 +193,16 @@ void sub_task_client(int thread_index, QpHandler **handler) {
             ne_send = poll_send_cq(*(handler[qp_id]), wc_send);
             for (size_t i = 0;i < ne_send;i++) {
                 assert(wc_send[i].status == IBV_WC_SUCCESS);
-                send_comp[qp_id].step();
+                send_comp[qp_id].step(SEND_CQ_BATCH);
             }
 
-            if (send[qp_id].index() < ops && send[qp_id].index() - recv_comp[qp_id].index() < tx_depth) {
-                size_t now_send_num = std::min(ops - send[qp_id].index(), tx_depth - (send[qp_id].index() - recv_comp[qp_id].index()));
-                while (now_send_num > 0) {
-                    size_t tmp_send_num = std::min(now_send_num, FLAGS_batch_size);
-                    post_send(*(handler[qp_id]), send[qp_id].offset(), FLAGS_packSize);
-                    for (size_t i = 0;i < tmp_send_num;i++) {
-                        timers[qp_id][timer_head[qp_id]] = get_tsc();
-                        timer_head[qp_id] = (timer_head[qp_id] + 1) % 128;
-                    }
-                    send[qp_id].step(tmp_send_num);
-                    now_send_num -= tmp_send_num;
-                }
+            if (send[qp_id].index() < ops && send[qp_id].index() - recv_comp[qp_id].index() <= tx_depth - batch_size) {
+                size_t now_send_num = std::min(ops - send[qp_id].index(), batch_size);
+                post_send_batch(*(handler[qp_id]), now_send_num, send[qp_id], FLAGS_packSize);
+                // for (size_t i = 0;i < now_send_num;i++) {
+                //     timers[qp_id][timer_head[qp_id]] = get_tsc();
+                //     timer_head[qp_id] = (timer_head[qp_id] + 1) % 128;
+                // }
             }
 
             if (total_finish >= ops) {
@@ -225,15 +214,15 @@ void sub_task_client(int thread_index, QpHandler **handler) {
     double duration = (end_time.tv_sec - begin_time.tv_sec) + (end_time.tv_nsec - begin_time.tv_nsec) / 1e9;
     double speed = 8.0 * total_finish * FLAGS_packSize / 1000 / 1000 / 1000 / duration;
 
-    for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
-        while (!stop_flag && send_comp[qp_id].index() < send[qp_id].index()) {
-            ne_send = poll_send_cq(*(handler[qp_id]), wc_send);
-            for (size_t i = 0;i < ne_send;i++) {
-                assert(wc_send[i].status == IBV_WC_SUCCESS);
-                send_comp[qp_id].step();
-            }
-        }
-    }
+    // for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
+    //     while (!stop_flag && send_comp[qp_id].index() < send[qp_id].index()) {
+    //         ne_send = poll_send_cq(*(handler[qp_id]), wc_send);
+    //         for (size_t i = 0;i < ne_send;i++) {
+    //             assert(wc_send[i].status == IBV_WC_SUCCESS);
+    //             send_comp[qp_id].step(SEND_CQ_BATCH);
+    //         }
+    //     }
+    // }
 
     std::lock_guard<std::mutex> guard(IO_LOCK);
     printf("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs\n", thread_index, duration, speed);
@@ -337,10 +326,6 @@ int main(int argc, char *argv[]) {
         hdr_init(1000, 50000000, 3, &latency_hist);
     }
 
-    if (FLAGS_batch_size != 1) {
-        printf("TODO....\n");
-        exit(0);
-    }
     benchmark();
 
     if (FLAGS_nodeId != 0) {

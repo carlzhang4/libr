@@ -551,29 +551,34 @@ void post_send(QpHandler &qp_handler, size_t offset, int length) {
 	qp_handler.send_wr->wr_id = offset;
 	qp_handler.send_wr->next = NULL;
 	// fuck https://github.com/linux-rdma/rdma-core/blob/6cd09097ad2eebde9a7fa3d3bb09a2cea6e3c2d6/providers/rxe/rxe.c#L1665-L1666
-	assert(ibv_post_send(qp_handler.qp, &qp_handler.send_wr[0], &qp_handler.send_bar_wr) == 0);
+	assert(ibv_post_send(qp_handler.qp, qp_handler.send_wr, &qp_handler.send_bar_wr) == 0);
 	// qp_handler.send_wr[0].send_flags = IBV_SEND_SIGNALED;
 	// qp_handler.send_wr[0].wr_id = 0;
 }
 
-void post_send_batch(QpHandler &qp_handler, int batch_size, size_t offset, int length) {
+// 务必注意这函数里面已经step过了
+void post_send_batch(QpHandler &qp_handler, int batch_size, OffsetHandler &handler, int length) {
 	assert(batch_size <= qp_handler.num_wrs);
 	for (int i = 0;i < batch_size;i++) {
-		qp_handler.send_sge_list[i].addr = qp_handler.buf + offset;
+		qp_handler.send_sge_list[i].addr = qp_handler.buf + handler.offset();
 		qp_handler.send_sge_list[i].length = length;
 		if (length <= qp_handler.max_inline_size) {
 			qp_handler.send_wr[i].send_flags |= IBV_SEND_INLINE;
 		}
-		qp_handler.send_wr[i].wr_id = offset;
+		qp_handler.send_wr[i].wr_id = handler.offset();
 		qp_handler.send_wr[i].next = NULL;
+		if (handler.index() % SEND_CQ_BATCH == SEND_CQ_BATCH - 1) {
+			qp_handler.send_wr[i].send_flags = IBV_SEND_SIGNALED;
+		} else {
+			qp_handler.send_wr[i].send_flags = 0;
+		}
 		if (i > 0) {
 			qp_handler.send_wr[i - 1].next = &qp_handler.send_wr[i];
 		}
+
+		handler.step();
 	}
-	int res = ibv_post_send(qp_handler.qp, qp_handler.send_wr, &qp_handler.send_bar_wr);
-	if (res != 0) {
-		LOG_E("post_send error %d", res);
-	}
+	assert(ibv_post_send(qp_handler.qp, qp_handler.send_wr, &qp_handler.send_bar_wr) == 0);
 }
 
 void post_recv(QpHandler &qp_handler, size_t offset, int length) {
@@ -582,7 +587,23 @@ void post_recv(QpHandler &qp_handler, size_t offset, int length) {
 	qp_handler.recv_wr->wr_id = offset;
 	qp_handler.recv_wr->next = NULL;
 	// fuck https://github.com/linux-rdma/rdma-core/blob/6cd09097ad2eebde9a7fa3d3bb09a2cea6e3c2d6/providers/rxe/rxe.c#L1665-L1666
-	assert(ibv_post_recv(qp_handler.qp, &qp_handler.recv_wr[0], &qp_handler.recv_bar_wr) == 0);
+	assert(ibv_post_recv(qp_handler.qp, qp_handler.recv_wr, &qp_handler.recv_bar_wr) == 0);
+}
+
+// 务必注意这函数里面已经step过了
+void post_recv_batch(QpHandler &qp_handler, int batch_size, OffsetHandler &handler, int length) {
+	assert(batch_size <= qp_handler.num_wrs);
+	for (int i = 0;i < batch_size;i++) {
+		qp_handler.recv_sge_list[i].addr = qp_handler.buf + handler.offset();
+		qp_handler.recv_sge_list[i].length = length;
+		qp_handler.recv_wr[i].wr_id = handler.offset();
+		qp_handler.recv_wr[i].next = NULL;
+		if (i > 0) {
+			qp_handler.recv_wr[i - 1].next = &qp_handler.recv_wr[i];
+		}
+		handler.step();
+	}
+	assert(ibv_post_recv(qp_handler.qp, qp_handler.recv_wr, &qp_handler.recv_bar_wr) == 0);
 }
 
 int poll_send_cq(QpHandler &qp_handler, struct ibv_wc *wc) {
