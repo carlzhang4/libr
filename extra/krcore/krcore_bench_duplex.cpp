@@ -29,13 +29,22 @@ DEFINE_uint64(batch_size, 1, "requeset batch_size");
 DEFINE_uint64(qp_per_core, 1, "qp per core");
 DEFINE_uint64(outstanding, 32, "outstanding request");
 std::atomic<bool> stop_flag = false;
+// !!!!!!!
+// amax2 client amax3 server
 unsigned char client_mac[6] = { 0x98,0x03,0x9b,0xca,0x48,0x38 };
 unsigned char server_mac[6] = { 0x98,0x03,0x9b,0xc7,0xc8,0x18 };
+
+// pcie5.0-up client and down server
+// unsigned char client_mac[6] = { 0xa0, 0x88, 0xc2, 0x31, 0xf7, 0xde };
+// unsigned char server_mac[6] = { 0xa0, 0x88, 0xc2, 0x32, 0x04, 0x30 };
+// !!!!!!
 void ctrl_c_handler(int) { stop_flag = true; }
 hdr_histogram *latency_hist = nullptr;
 double scale_value = 10;
 std::mutex IO_LOCK;
 std::atomic<int> send_sync = 0;
+std::atomic<double> total_bw = 0;
+
 const char *krcoreinode = "/dev/krcore";
 
 class NetParam {
@@ -289,28 +298,25 @@ void sub_task_server(int thread_index, int krcore_fd, void **user_local_buf) {
     }
 
     size_t actual_poll_send_num, actual_poll_recv_num;
-    size_t total_finish = 0;
+    size_t batch_size = FLAGS_batch_size;
+
     while (!stop_flag) {
         for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
             krcore_poll_recv_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, qp_id, actual_poll_recv_num);
 
             for (size_t i = 0;i < actual_poll_recv_num;i++) {
-                if (recv_comp[qp_id].index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
-                    krcore_post_recv(krcore_fd, recv[qp_id].offset(), qp_id, FLAGS_batch_size, FLAGS_packSize);
-                    recv[qp_id].step(FLAGS_batch_size);
+                if (recv_comp[qp_id].index() % batch_size == batch_size - 1) {
+                    krcore_post_recv(krcore_fd, recv[qp_id].offset(), qp_id, batch_size, FLAGS_packSize);
+                    recv[qp_id].step(batch_size);
                 }
                 recv_comp[qp_id].step();
             }
-            if (actual_poll_recv_num > 0) {
-                size_t tmp_recv_num = actual_poll_recv_num;
-                while (tmp_recv_num > 0) {
-                    int now_send_num = std::min(tmp_recv_num, FLAGS_batch_size);
-                    krcore_post_send(krcore_fd, send[qp_id].offset(), qp_id, now_send_num, FLAGS_packSize);
-                    send[qp_id].step(now_send_num);
-                    total_finish += now_send_num;
-                    tmp_recv_num -= now_send_num;
-                }
+
+            if (recv_comp[qp_id].index() - send[qp_id].index() >= batch_size) {
+                krcore_post_send(krcore_fd, send[qp_id].offset(), qp_id, batch_size, FLAGS_packSize);
+                send[qp_id].step(batch_size);
             }
+
             krcore_poll_send_cq(krcore_fd, KRCORE_CQ_POLL_BATCH, qp_id, actual_poll_send_num);
             for (size_t i = 0;i < actual_poll_send_num;i++) {
                 send_comp[qp_id].step();
@@ -366,8 +372,8 @@ void sub_task_client(int thread_index, int krcore_fd, void **user_local_buf) {
     for (size_t i = 0;i < tx_depth;i++) {
         for (size_t qp_id = 0; qp_id < FLAGS_qp_per_core;qp_id++) {
             krcore_post_send(krcore_fd, send[qp_id].offset(), qp_id, 1, FLAGS_packSize);
-            timers[qp_id][timer_head[qp_id]] = get_tsc();
-            timer_head[qp_id] = (timer_head[qp_id] + 1) % 128;
+            // timers[qp_id][timer_head[qp_id]] = get_tsc();
+            // timer_head[qp_id] = (timer_head[qp_id] + 1) % 128;
             send[qp_id].step();
         }
     }
@@ -379,6 +385,7 @@ void sub_task_client(int thread_index, int krcore_fd, void **user_local_buf) {
     begin_time.tv_sec = 0;
 
     size_t total_finish = 0;
+    size_t batch_size = FLAGS_batch_size;
 
     while (!done && !stop_flag) {
         for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
@@ -387,15 +394,15 @@ void sub_task_client(int thread_index, int krcore_fd, void **user_local_buf) {
                 clock_gettime(CLOCK_MONOTONIC, &begin_time);
             }
             for (size_t i = 0;i < actual_poll_recv_num;i++) {
-                hdr_record_value_atomic(latency_hist, (get_tsc() - timers[qp_id][timer_tail[qp_id]]) * 10);
+                // hdr_record_value_atomic(latency_hist, (get_tsc() - timers[qp_id][timer_tail[qp_id]]) * 10);
                 // printf("recv_comp:%ld\n", recv_comp[qp_id].index());
-                timer_tail[qp_id] = (timer_tail[qp_id] + 1) % 128;
+                // timer_tail[qp_id] = (timer_tail[qp_id] + 1) % 128;
             }
             for (size_t i = 0;i < actual_poll_recv_num;i++) {
                 if (recv[qp_id].index() < ops) {
-                    if (recv_comp[qp_id].index() % FLAGS_batch_size == FLAGS_batch_size - 1) {
-                        krcore_post_recv(krcore_fd, recv[qp_id].offset(), qp_id, FLAGS_batch_size, FLAGS_packSize);
-                        recv[qp_id].step(FLAGS_batch_size);
+                    if (recv_comp[qp_id].index() % batch_size == batch_size - 1) {
+                        krcore_post_recv(krcore_fd, recv[qp_id].offset(), qp_id, batch_size, FLAGS_packSize);
+                        recv[qp_id].step(batch_size);
                     }
                 }
                 recv_comp[qp_id].step();
@@ -407,18 +414,10 @@ void sub_task_client(int thread_index, int krcore_fd, void **user_local_buf) {
                 send_comp[qp_id].step();
             }
 
-            if (send[qp_id].index() < ops && send[qp_id].index() - recv_comp[qp_id].index() < tx_depth) {
-                size_t now_send_num = std::min(ops - send[qp_id].index(), tx_depth - (send[qp_id].index() - recv_comp[qp_id].index()));
-                while (now_send_num > 0) {
-                    size_t tmp_send_num = std::min(now_send_num, FLAGS_batch_size);
-                    krcore_post_send(krcore_fd, send[qp_id].offset(), qp_id, tmp_send_num, FLAGS_packSize);
-                    for (size_t i = 0;i < tmp_send_num;i++) {
-                        timers[qp_id][timer_head[qp_id]] = get_tsc();
-                        timer_head[qp_id] = (timer_head[qp_id] + 1) % 128;
-                    }
-                    send[qp_id].step(tmp_send_num);
-                    now_send_num -= tmp_send_num;
-                }
+            if (send[qp_id].index() < ops && send[qp_id].index() - recv_comp[qp_id].index() <= tx_depth - batch_size) {
+                size_t now_send_num = std::min(ops - send[qp_id].index(), batch_size);
+                krcore_post_send(krcore_fd, send[qp_id].offset(), qp_id, now_send_num, FLAGS_packSize);
+                send[qp_id].step(now_send_num);
             }
 
             if (total_finish >= ops) {
@@ -441,6 +440,7 @@ void sub_task_client(int thread_index, int krcore_fd, void **user_local_buf) {
 
     std::lock_guard<std::mutex> guard(IO_LOCK);
     printf("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs\n", thread_index, duration, speed);
+    total_bw = total_bw + speed;
 }
 
 void sub_task(int thread_index) {
@@ -538,8 +538,10 @@ int main(int argc, char *argv[]) {
     benchmark();
 
     if (FLAGS_nodeId != 0) {
-        hdr_percentiles_print(latency_hist, stdout, 5, 10 * get_tsc_freq_per_ns(), CLASSIC);
-        hdr_close(latency_hist);
+        printf("Total throughput: %f Gbps\n", total_bw.load());
     }
-
+    // if (FLAGS_nodeId != 0) {
+    //     hdr_percentiles_print(latency_hist, stdout, 5, 10 * get_tsc_freq_per_ns(), CLASSIC);
+    //     hdr_close(latency_hist);
+    // }
 }
