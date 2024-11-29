@@ -13,7 +13,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-address-of-packed-member -Wno-neste
 set(LIBRARIES ${LIBRARIES} pthread numa gflags hdr_histogram_static)
 
 option(HDR_HISTOGRAM_BUILD_PROGRAMS OFF)
-add_subdirectory(${CMAKE_SOURCE_DIR}/../HdrHistogram_c HdrHistogram_c)
+add_subdirectory(${CMAKE_SOURCE_DIR}/../../HdrHistogram_c HdrHistogram_c)
 
 add_executable(krcore_bench_duplex ./krcore_bench_duplex.cpp)
 
