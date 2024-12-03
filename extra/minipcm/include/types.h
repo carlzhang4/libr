@@ -91,8 +91,26 @@ namespace pcm {
     constexpr auto SERVER_MC_CH_PMON_FIXED_CTL_OFFSET = 0x54;
     constexpr auto SERVER_MC_CH_PMON_FIXED_CTR_OFFSET = 0x38;
 
+#define MC_CH_PCI_PMON_CTL_EVENT(x) (x << 0)
+#define MC_CH_PCI_PMON_CTL_UMASK(x) (x << 8)
+#define MC_CH_PCI_PMON_CTL_RST (1 << 17)
+#define MC_CH_PCI_PMON_CTL_EDGE_DET (1 << 18)
+#define MC_CH_PCI_PMON_CTL_EN (1 << 22)
+#define MC_CH_PCI_PMON_CTL_INVERT (1 << 23)
+#define MC_CH_PCI_PMON_CTL_THRESH(x) (x << 24UL)
+
+#define UNC_PMON_UNIT_CTL_RST_CONTROL  (1 << 0)
+#define UNC_PMON_UNIT_CTL_RST_COUNTERS     (1 << 1)
+#define UNC_PMON_UNIT_CTL_FRZ  (1 << 8)
+#define UNC_PMON_UNIT_CTL_FRZ_EN   (1 << 16)
+#define UNC_PMON_UNIT_CTL_RSV  ((1 << 16) + (1 << 17))
+
 #define SPR_UNC_PMON_UNIT_CTL_FRZ          (1 << 0)
 #define SPR_UNC_PMON_UNIT_CTL_RST_CONTROL  (1 << 8)
 #define SPR_UNC_PMON_UNIT_CTL_RST_COUNTERS (1 << 9)
+
+#define MC_CH_PCI_PMON_FIXED_CTL_RST (1 << 19)
+#define MC_CH_PCI_PMON_FIXED_CTL_EN (1 << 22)
+#define EDC_CH_PCI_PMON_FIXED_CTL_EN (1 << 0)
 
 }

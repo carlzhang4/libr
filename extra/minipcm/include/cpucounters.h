@@ -87,6 +87,24 @@ namespace pcm {
         }
     };
 
+    enum EventPosition {
+        READ = 0,
+        WRITE = 1,
+        READ2 = 2,
+        WRITE2 = 3,
+        READ_RANK_A = 0,
+        WRITE_RANK_A = 1,
+        READ_RANK_B = 2,
+        WRITE_RANK_B = 3,
+        PARTIAL = 2,
+        PMM_READ = 2,
+        PMM_WRITE = 3,
+        MM_MISS_CLEAN = 2,
+        MM_MISS_DIRTY = 3,
+        NM_HIT = 0,  // NM :  Near Memory (DRAM cache) in Memory Mode
+        M2M_CLOCKTICKS = 1
+    };
+
     class UncorePMU {
         typedef std::shared_ptr<HWRegister> HWRegisterPtr;
         HWRegisterPtr unitControl;
