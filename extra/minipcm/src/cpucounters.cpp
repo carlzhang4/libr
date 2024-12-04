@@ -21,9 +21,7 @@ namespace pcm {
         //std::cout << std::flush;
     }
     PciHandleType *createIntelPerfMonDevice(uint32 groupnr_, int32 bus_, uint32 dev_, uint32 func_, bool checkVendor) {
-        std::cout << groupnr_ << " " << bus_ << " " << dev_ << " " << func_ << " " << checkVendor << std::endl;
         if (PciHandleType::exists(groupnr_, (uint32)bus_, dev_, func_)) {
-            std::cout << "exists" << std::endl;
             PciHandleType *handle = new PciHandleType(groupnr_, bus_, dev_, func_);
 
             if (!checkVendor) return handle;
