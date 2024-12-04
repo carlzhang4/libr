@@ -78,15 +78,15 @@ int main() {
     size_t prev_tsc = 0;
     unsigned int dummy;
 
-    for (size_t i = 0;i < 10;i++) {
+    for (size_t i = 0;i < 100;i++) {
         size_t now_tsc = __rdtscp(&dummy);
         for (size_t j = 0;j < numBoxes;j++) {
             imcPMUs[j].freeze(UNC_PMON_UNIT_CTL_FRZ_EN);
         }
         size_t now_read = 0, now_write = 0;
         for (size_t j = 0;j < numBoxes;j++) {
-            now_read += *imcPMUs[0].counterValue[pcm::EventPosition::READ];
-            now_write += *imcPMUs[0].counterValue[pcm::EventPosition::WRITE];
+            now_read += *imcPMUs[j].counterValue[pcm::EventPosition::READ];
+            now_write += *imcPMUs[j].counterValue[pcm::EventPosition::WRITE];
         }
 
         double read_bw_mb = (now_read - prev_read) * 1.0 * 64 * 1000 * tsc_freq / (now_tsc - prev_tsc);

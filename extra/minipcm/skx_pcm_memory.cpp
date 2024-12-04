@@ -82,7 +82,8 @@ int main() {
     uint32_t MCCntConfig[4] = { 0,0,0,0 };
     MCCntConfig[pcm::EventPosition::READ] = MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(3);  // monitor reads on counter 0: CAS_COUNT.RD
     MCCntConfig[pcm::EventPosition::WRITE] = MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(12); // monitor writes on counter 1: CAS_COUNT.WR
-    MCCntConfig[pcm::EventPosition::PARTIAL] = MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(2);
+    MCCntConfig[pcm::EventPosition::PMM_READ] = MC_CH_PCI_PMON_CTL_EVENT(0xe3);
+    MCCntConfig[pcm::EventPosition::PMM_WRITE] = MC_CH_PCI_PMON_CTL_EVENT(0xe7);
 
     const uint32_t extraIMC = UNC_PMON_UNIT_CTL_RSV;
     for (size_t i = 0;i < imcPMUs.size();i++) {
@@ -106,15 +107,15 @@ int main() {
     size_t prev_tsc = 0;
     unsigned int dummy;
 
-    for (size_t i = 0;i < 10;i++) {
+    for (size_t i = 0;i < 100;i++) {
         size_t now_tsc = __rdtscp(&dummy);
         for (size_t j = 0;j < imcPMUs.size();j++) {
             imcPMUs[j].freeze(UNC_PMON_UNIT_CTL_RSV);
         }
         size_t now_read = 0, now_write = 0;
         for (size_t j = 0;j < imcPMUs.size();j++) {
-            now_read += *imcPMUs[0].counterValue[pcm::EventPosition::READ];
-            now_write += *imcPMUs[0].counterValue[pcm::EventPosition::WRITE];
+            now_read += *imcPMUs[j].counterValue[pcm::EventPosition::READ];
+            now_write += *imcPMUs[j].counterValue[pcm::EventPosition::WRITE];
         }
 
         double read_bw_mb = (now_read - prev_read) * 1.0 * 64 * 1000 * tsc_freq / (now_tsc - prev_tsc);
