@@ -39,12 +39,12 @@ int main() {
                     CounterValueRegs.push_back(makeRegister(uncorePMUDiscovery->getBoxCtrAddr(BoxType, socket_, pos, r), 64));
                 }
                 std::cout << n_regs << ' ' << pos << std::endl;
-                imcPMUs.push_back(pcm::UncorePMU(boxCtlRegister,
+                imcPMUs.push_back(pcm::UncorePMU(pcm::SPR,
+                    boxCtlRegister,
                     CounterControlRegs,
                     CounterValueRegs,
                     makeRegister(uncorePMUDiscovery->getBoxCtlAddr(BoxType, socket_, pos) + pcm::SERVER_MC_CH_PMON_FIXED_CTL_OFFSET, 32),
                     makeRegister(uncorePMUDiscovery->getBoxCtlAddr(BoxType, socket_, pos) + pcm::SERVER_MC_CH_PMON_FIXED_CTR_OFFSET, 64)));
-                std::cout << "imc push boxCtlRegister" << std::endl;
 
             }
         }
