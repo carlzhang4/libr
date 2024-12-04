@@ -24,7 +24,6 @@ int main() {
 
     std::vector<std::vector< std::pair<uint32_t, uint32_t> > > MCRegisterLocation;
     std::vector<std::pair<uint32_t, uint32_t> > socket2iMCbus{};
-    std::vector<uint32_t> num_imc_channels; // number of memory channels in each memory controller
     int32_t iMCbus;
     uint32_t groupnr;
 
@@ -48,17 +47,12 @@ int main() {
 
     std::vector<std::shared_ptr<pcm::PciHandleType> > imcHandles;
 
-    auto lastWorkingChannels = imcHandles.size();
     for (auto &ctrl : MCRegisterLocation) {
         for (auto &channel : ctrl) {
             std::cout << "iMCBus " << iMCbus << std::endl;
             pcm::PciHandleType *handle = pcm::createIntelPerfMonDevice(groupnr, iMCbus, channel.first, channel.second, true);
             if (handle) imcHandles.push_back(std::shared_ptr<pcm::PciHandleType>(handle));
         }
-        if (imcHandles.size() > lastWorkingChannels) {
-            num_imc_channels.push_back((uint32_t)(imcHandles.size() - lastWorkingChannels));
-        }
-        lastWorkingChannels = imcHandles.size();
     }
 
     for (auto &handle : imcHandles) {
