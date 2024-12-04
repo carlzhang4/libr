@@ -1,47 +1,5 @@
-#include <iostream>
-#include <thread>
-#include <mutex>
-#include <cstdio>
-#include <stdio.h>
-#include <time.h>
-#include <atomic>
-#include <gflags/gflags.h>
-#include <queue> 
-#include <fstream>
-#include "libr.hpp"
-#include <hdr/hdr_histogram.h>
 
 #include "freeflow_bench_duplex.h"
-
-DEFINE_int32(iterations, 1000, "iterations");
-DEFINE_int32(packSize, 1024, "packSize");
-DEFINE_int32(threads, 1, "num_threads");
-DEFINE_int32(nodeId, 0, "nodeId");
-DEFINE_string(serverIp, "", "serverIp");
-DEFINE_int32(coreOffset, 0, "coreOffset");
-DEFINE_int32(numaNode, 0, "numaNode");
-DEFINE_int32(port, 6666, "bind_port");
-DEFINE_uint64(batch_size, 1, "requeset batch_size");
-DEFINE_uint64(qp_per_core, 1, "qp per core");
-DEFINE_uint64(outstanding, 32, "outstanding request");
-DEFINE_string(deviceName, "mlx5_0", "deviceName");
-DEFINE_int32(gidIndex, 3, "gidIndex");
-
-std::atomic<bool> stop_flag = false;
-void ctrl_c_handler(int) { stop_flag = true; }
-hdr_histogram *latency_hist = nullptr;
-double scale_value = 10;
-std::mutex IO_LOCK;
-std::atomic<int> send_sync = 0;
-std::atomic<double> total_bw = 0;
-
-#define ROUND_UP(value, alignment) (((value) + (alignment) - 1) & ~((alignment) - 1))
-
-const auto kPageSize = 4096;
-struct ListNode {
-    ListNode *next;
-    std::byte padding[kPageSize];
-};
 
 void sub_task_server(int thread_index, QpHandler **handler) {
     size_t send_recv_buf_size = FREEFLOW_ALLOC_SIZE / 2;
@@ -93,6 +51,13 @@ void sub_task_server(int thread_index, QpHandler **handler) {
 
     ListNode *now_head = &list[0];
     size_t traverse_num = 8;
+    printf("thread %d start server\n", thread_index);
+
+    // sync with other server threads
+    send_sync++;
+    while (send_sync != FLAGS_threads) {
+    }
+
     while (!stop_flag) {
         for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
             ne_recv = poll_recv_cq(*(handler[qp_id]), wc_recv);
@@ -153,6 +118,7 @@ void sub_task_server(int thread_index, QpHandler **handler) {
         free(copy_bufs[i]);
     }
 }
+
 
 void sub_task_client(int thread_index, QpHandler **handler) {
     size_t send_recv_buf_size = FREEFLOW_ALLOC_SIZE / 2;
@@ -322,9 +288,18 @@ void sub_task(int thread_index) {
     }
 
     if (FLAGS_nodeId == 0) {
-        sub_task_server(thread_index, qp_handlers);
+        // 如果不测延迟，就i全部线程都使用sub_task_server和sub_task_client即可
+        if (thread_index == FLAGS_coreOffset) {
+            sub_task_latency_server(thread_index, qp_handlers);
+        } else {
+            sub_task_server(thread_index, qp_handlers);
+        }
     } else {
-        sub_task_client(thread_index, qp_handlers);
+        if (thread_index == FLAGS_coreOffset) {
+            sub_task_latency_client(thread_index, qp_handlers);
+        } else {
+            sub_task_client(thread_index, qp_handlers);
+        }
     }
 
     for (size_t i = 0;i < FLAGS_qp_per_core;i++) {
@@ -369,7 +344,7 @@ int main(int argc, char *argv[]) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
     if (FLAGS_nodeId != 0) {
-        hdr_init(1000, 50000000, 3, &latency_hist);
+        hdr_init(1000 * scale_value, 50000000 * scale_value, 3, &latency_hist);
     }
     assert(FLAGS_qp_per_core <= FREEFLOW_MAX_QP_PER_CORE);
 
