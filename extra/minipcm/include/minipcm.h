@@ -228,6 +228,8 @@ public:
             }
             imcPMUs[i].resetUnfreeze(extraIMC);
         }
+        start_read_value.resize(imcPMUs.size());
+        start_write_value.resize(imcPMUs.size());
     }
 
     ~SPRPcmMemory() {
