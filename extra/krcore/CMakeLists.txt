@@ -10,11 +10,17 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-old-style-cast -Wno-unused-function
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-address-of-packed-member -Wno-nested-anon-types -Wno-keyword-macro -Wno-deprecated-declarations")
 
 
+include_directories("${CMAKE_SOURCE_DIR}/../minipcm/include")
+
+file(GLOB PCMRSOURCES ${CMAKE_SOURCE_DIR}/../minipcm/src/*.cpp)
+list(APPEND PCMSOURCES ${PCMRSOURCES})
+
+
 set(LIBRARIES ${LIBRARIES} pthread numa gflags hdr_histogram_static)
 
 option(HDR_HISTOGRAM_BUILD_PROGRAMS OFF)
 add_subdirectory(${CMAKE_SOURCE_DIR}/../../HdrHistogram_c HdrHistogram_c)
 
-add_executable(krcore_bench_duplex ./krcore_bench_duplex.cpp)
+add_executable(krcore_bench_duplex ./krcore_bench_duplex.cpp ${PCMSOURCES})
 
 target_link_libraries(krcore_bench_duplex ${LIBRARIES})

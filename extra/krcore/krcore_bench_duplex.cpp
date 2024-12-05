@@ -1,111 +1,4 @@
-#include <bits/stdc++.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <sys/ioctl.h>
-#include <numaif.h>
-#include <numa.h>
-#include <fcntl.h>
-#include <algorithm>
-
-#include <gflags/gflags.h>
-#include <hdr/hdr_histogram.h>
-#include "./rdma_krcore.h"
-#include <x86intrin.h>
-
-
-DEFINE_int32(iterations, 1000, "iterations");
-DEFINE_int32(packSize, 1024, "packSize");
-DEFINE_int32(threads, 1, "num_threads");
-DEFINE_int32(nodeId, 0, "nodeId");
-DEFINE_string(serverIp, "", "serverIp");
-DEFINE_int32(coreOffset, 0, "coreOffset");
-DEFINE_int32(numaNode, 0, "numaNode");
-DEFINE_int32(port, 6666, "bind_port");
-DEFINE_uint64(batch_size, 1, "requeset batch_size");
-DEFINE_uint64(qp_per_core, 1, "qp per core");
-DEFINE_uint64(outstanding, 32, "outstanding request");
-std::atomic<bool> stop_flag = false;
-// !!!!!!!
-// amax2 client amax3 server
-unsigned char client_mac[6] = { 0x98,0x03,0x9b,0xca,0x48,0x38 };
-unsigned char server_mac[6] = { 0x98,0x03,0x9b,0xc7,0xc8,0x18 };
-
-// pcie5.0-up client and down server
-// unsigned char client_mac[6] = { 0xa0, 0x88, 0xc2, 0x31, 0xf7, 0xde };
-// unsigned char server_mac[6] = { 0xa0, 0x88, 0xc2, 0x32, 0x04, 0x30 };
-// !!!!!!
-void ctrl_c_handler(int) { stop_flag = true; }
-hdr_histogram *latency_hist = nullptr;
-double scale_value = 10;
-std::mutex IO_LOCK;
-std::atomic<int> send_sync = 0;
-std::atomic<double> total_bw = 0;
-
-const char *krcoreinode = "/dev/krcore";
-
-class NetParam {
-public:
-    int nodeId;
-    std::string serverIp;
-    int numNodes;
-    int sockfd[2];
-    int sock_port;
-};
-class OffsetHandler {
-public:
-    int max_num;
-    int step_size;
-    int buf_offset;
-    size_t cur;
-
-    OffsetHandler() {
-        cur = 0;
-    }
-
-    OffsetHandler(int max_num, int step_size, int buf_offset):max_num(max_num), step_size(step_size), buf_offset(buf_offset) {
-        cur = 0;
-    }
-    void init(int max_num, int step_size, int buf_offset) {
-        cur = 0;
-        this->max_num = max_num;
-        this->step_size = step_size;
-        this->buf_offset = buf_offset;
-    }
-    size_t step() {
-        size_t ret = offset();
-        cur += 1;
-        return ret;
-    }
-    size_t step(int step) {
-        size_t ret = offset();
-        cur += step;
-        return ret;
-    }
-    size_t offset() {
-        return (cur % max_num) * step_size + buf_offset;
-    }
-    size_t index() {
-        return cur;
-    }
-    int index_mod() {
-        return cur % max_num;
-    }
-};
-#define ROUND_UP(value, alignment) (((value) + (alignment) - 1) & ~((alignment) - 1))
-
-static double get_tsc_freq_per_ns() {
-    // MUST BE CHANGE BY 
-    // sudo journalctl -k --grep '^tsc:'  | cut -d' ' -f5-
-    return 2.2;
-}
-
-static size_t get_tsc() {
-    return __rdtsc();
-}
+#include "krcore_bench_duplex.h"
 
 void socket_init(NetParam &net_param) {
     if (net_param.sock_port == 0) {
@@ -222,57 +115,7 @@ void wait_scheduling(int thread_index, std::mutex &IO_LOCK) {
 }
 
 
-void krcore_post_send(int krcore_fd, size_t offset, int qp_id, size_t batch_size, int length) {
-    struct KRCORE_IOC_POST_SEND_PARAMS post_send_params;
-    post_send_params.qp_id = qp_id;
-    post_send_params.offset = offset;
-    post_send_params.batch_size = batch_size;
-    post_send_params.length = length;
-    int retcode = ioctl(krcore_fd, KRCORE_IOC_POST_SEND, &post_send_params);
-    if (retcode != 0 || post_send_params.success_send_cnt != batch_size) {
-        printf("qp_id = %d ioctl KRCORE_IOC_POST_SEND failed\n", qp_id);
-        exit(1);
-    }
-}
 
-void krcore_post_recv(int krcore_fd, size_t offset, int qp_id, size_t batch_size, int length) {
-    struct KRCORE_IOC_POST_RECV_PARAMS post_recv_params;
-    post_recv_params.qp_id = qp_id;
-    post_recv_params.offset = offset;
-    post_recv_params.batch_size = batch_size;
-    post_recv_params.length = length;
-    int retcode = ioctl(krcore_fd, KRCORE_IOC_POST_RECV, &post_recv_params);
-    if (retcode != 0 || post_recv_params.success_post_cnt != batch_size) {
-        printf("qp_id = %d ioctl KRCORE_IOC_POST_RECV failed\n", qp_id);
-        exit(1);
-    }
-}
-
-void krcore_poll_send_cq(int krcore_fd, int max_poll_num, int qp_id, size_t &actual_poll_num) {
-    struct KRCORE_IOC_POLL_SEND_CQ_PARAMS poll_send_cq_params;
-    poll_send_cq_params.qp_id = qp_id;
-    poll_send_cq_params.max_poll_num = max_poll_num;
-    poll_send_cq_params.actual_poll_num = 0;
-    int retcode = ioctl(krcore_fd, KRCORE_IOC_POLL_SEND_CQ, &poll_send_cq_params);
-    if (retcode != 0) {
-        printf("qp_id = %d ioctl KRCORE_IOC_POLL_SEND_CQ failed\n", qp_id);
-        exit(1);
-    }
-    actual_poll_num = poll_send_cq_params.actual_poll_num;
-}
-
-void krcore_poll_recv_cq(int krcore_fd, int max_poll_num, int qp_id, size_t &actual_poll_num) {
-    struct KRCORE_IOC_POLL_RECV_CQ_PARAMS poll_recv_cq_params;
-    poll_recv_cq_params.qp_id = qp_id;
-    poll_recv_cq_params.max_poll_num = max_poll_num;
-    poll_recv_cq_params.actual_poll_num = 0;
-    int retcode = ioctl(krcore_fd, KRCORE_IOC_POLL_RECV_CQ, &poll_recv_cq_params);
-    if (retcode != 0) {
-        printf("qp_id = %d ioctl KRCORE_IOC_POLL_RECV_CQ failed\n", qp_id);
-        exit(1);
-    }
-    actual_poll_num = poll_recv_cq_params.actual_poll_num;
-}
 
 void sub_task_server(int thread_index, int krcore_fd, void **user_local_buf) {
     size_t send_recv_buf_size = KRCORE_ALLOC_SIZE / 2;
@@ -299,6 +142,11 @@ void sub_task_server(int thread_index, int krcore_fd, void **user_local_buf) {
 
     size_t actual_poll_send_num, actual_poll_recv_num;
     size_t batch_size = FLAGS_batch_size;
+
+    // sync with other server threads
+    send_sync++;
+    while (send_sync != FLAGS_threads) {
+    }
 
     while (!stop_flag) {
         for (size_t qp_id = 0;qp_id < FLAGS_qp_per_core;qp_id++) {
@@ -493,9 +341,17 @@ void sub_task(int thread_index) {
     }
 
     if (FLAGS_nodeId == 0) {
-        sub_task_server(thread_index, fd, user_local_buf);
+        if (thread_index == FLAGS_coreOffset) {
+            sub_task_latency_server(thread_index, fd, user_local_buf);
+        } else {
+            sub_task_server(thread_index, fd, user_local_buf);
+        }
     } else {
-        sub_task_client(thread_index, fd, user_local_buf);
+        if (thread_index == FLAGS_coreOffset) {
+            sub_task_latency_client(thread_index, fd, user_local_buf);
+        } else {
+            sub_task_client(thread_index, fd, user_local_buf);
+        }
     }
 
     struct KRCORE_IOC_FREE_QP_PARAMS free_qp_params;
@@ -532,8 +388,9 @@ int main(int argc, char *argv[]) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
     if (FLAGS_nodeId != 0) {
-        hdr_init(1000, 50000000, 3, &latency_hist);
+        hdr_init(1000 * scale_value, 50000000 * scale_value, 3, &latency_hist);
     }
+    assert(FLAGS_qp_per_core <= KRCORE_MAX_QP_PER_CORE);
 
     benchmark();
 
