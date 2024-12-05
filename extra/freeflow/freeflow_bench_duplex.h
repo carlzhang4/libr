@@ -106,7 +106,7 @@ void sub_task_latency_server(int thread_index, QpHandler **handler) {
     size_t traverse_num = 8;
     printf("thread %d start server\n", thread_index);
 
-    PcmMemory *pcmMemory = new SKXPcmMemory(FLAGS_numaNode, get_tsc_freq_per_ns());
+    PcmMemory *pcmMemory = new SPRPcmMemory(FLAGS_numaNode, get_tsc_freq_per_ns());
     // sync with other server threads
     send_sync++;
     while (send_sync != FLAGS_threads) {
@@ -160,7 +160,7 @@ void sub_task_latency_server(int thread_index, QpHandler **handler) {
             size_t now_tsc = __rdtscp(&dummy);
             if (now_tsc - prev_tsc > get_tsc_freq_per_ns() * record_interval) {
                 auto [read_bw_mb, write_bw_mb] = pcmMemory->endRecord();
-                printf("read_bw_mb:%.1lf, write_bw_mb:%.1lf\n", read_bw_mb, write_bw_mb);
+                printf("%-8.0lf %-8.0lf\n", read_bw_mb, write_bw_mb);
                 pcmMemory->startRecord();
                 prev_tsc = __rdtscp(&dummy);
             }
@@ -246,7 +246,7 @@ void sub_task_latency_client(int thread_index, QpHandler **handler) {
             }
             for (size_t i = 0;i < ne_recv;i++) {
                 assert(wc_recv[i].status == IBV_WC_SUCCESS);
-                hdr_record_value(latency_hist, (get_tsc() - timers[qp_id][timer_tail[qp_id]]) * 10);
+                hdr_record_value(latency_hist, (get_tsc() - timers[qp_id][timer_tail[qp_id]]) * scale_value);
                 // printf("recv_comp:%ld\n", recv_comp[qp_id].index());
                 timer_tail[qp_id] = (timer_tail[qp_id] + 1) % 128;
             }
@@ -285,7 +285,7 @@ void sub_task_latency_client(int thread_index, QpHandler **handler) {
                 double p99_latency = hdr_value_at_percentile(latency_hist, 99) / (get_tsc_freq_per_ns() * scale_value * 1000);
                 double p999_latency = hdr_value_at_percentile(latency_hist, 99.9) / (get_tsc_freq_per_ns() * scale_value * 1000);
                 double now_speed = 8.0 * (total_finish - prev_ops) * FLAGS_packSize / record_interval;
-                printf("speed: %.2lf, %.2lf %.2lf %.2lf\n", now_speed, avg_latency, p99_latency, p999_latency);
+                printf("%-6.2lf %-6.2lf %-6.2lf %-6.2lf\n", now_speed, avg_latency, p99_latency, p999_latency);
                 hdr_reset(latency_hist);
 
                 prev_tsc = __rdtscp(&dummy);
