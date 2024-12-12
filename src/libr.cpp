@@ -284,8 +284,6 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	qp_handler->tx_depth = tx_depth;
 	qp_handler->rx_depth = rx_depth;
 
-	context_index++;
-
 	return qp_handler;
 }
 
