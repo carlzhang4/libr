@@ -185,6 +185,7 @@ static struct mlx5dv_devx_umem *devx_umem_reg(struct ibv_context *context, void 
         umem_in.access ^= IBV_ACCESS_HUGETLB;
         umem_in.pgsz_bitmap = 2 * 1024 * 1024;
     } else {
+        LOG_I("umem reg use 4K page size");
         umem_in.pgsz_bitmap = PAGE_SIZE;
     }
     return  mlx5dv_devx_umem_reg_ex(context, &umem_in);
@@ -197,10 +198,11 @@ struct devx_mr *devx_reg_mr(struct ibv_pd *pd, void *addr, size_t size, uint32_t
     struct mlx5dv_devx_umem *umem = devx_umem_reg(pd->context, addr, size, access);
     struct mlx5dv_devx_obj *mkey_obj;
     if (umem == NULL && errno == EPROTONOSUPPORT) {
+        LOG_I("devx_umem_reg failed, fallback to mlx5dv_devx_umem_reg");
         umem = mlx5dv_devx_umem_reg(pd->context, addr, size, access);
     }
     if (!umem) {
-        LOG_E("devx_umem_reg failed, Got errno: %s", strerror(errno));
+        LOG_E("devx_umem_reg failed, Got errno %d: %s", errno, strerror(errno));
         goto __failed;
     }
     if (devx_query_ibv_pd_number(pd, &pdn) != DEVX_OK) {

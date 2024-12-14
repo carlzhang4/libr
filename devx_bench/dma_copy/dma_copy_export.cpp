@@ -80,8 +80,8 @@ int main(int argc, char *argv[]) {
             return -1;
         }
         resources[i].size = BUF_SIZE;
-        resources[i].mr = devx_reg_mr(resources[i].pd, resources[i].addr, resources[i].size, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ
-            | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_HUGETLB | IBV_ACCESS_RELAXED_ORDERING);
+        // 这里本来加了个IBV_ACCESS_RELAXED_ORDERING，但是如果使用linux自带的驱动会报错，所以删除了IBV_ACCESS_RELAXED_ORDERING
+        resources[i].mr = devx_reg_mr(resources[i].pd, resources[i].addr, resources[i].size, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
         if (!resources[i].mr) {
             LOG_I("can't devx_reg_mr\n");
             return -1;
