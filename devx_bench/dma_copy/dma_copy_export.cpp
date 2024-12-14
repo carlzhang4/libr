@@ -39,6 +39,7 @@ int main(int argc, char *argv[]) {
     net_param.ib_port = 1;//minimum 1
     net_param.page_size = sysconf(_SC_PAGESIZE);
     net_param.cacheline_size = get_cache_line_size();
+    net_param.use_devx_context = false;
 
     roce_init(net_param, NUM_THREADS);
     struct devx_hca_capabilities caps;

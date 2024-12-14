@@ -336,7 +336,7 @@ int main(int argc, char *argv[]) {
     net_param.sock_port = FLAGS_port;
     // use devx context for devx vhca
     // 这里好像不用开use devx了，默认是all use的
-    // net_param.use_devx_context = true;
+    net_param.use_devx_context = false;
 
     resources = new vhca_resource[NUM_THREADS];
     init_net_param(net_param);
