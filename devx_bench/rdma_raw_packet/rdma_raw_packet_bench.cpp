@@ -33,8 +33,14 @@ static uint8_t RSS_KEY[40] = { 0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
                               0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa };
 
 // static uint8_t SERVER_MAC_ADDR[6] = { 0x02, 0xc3, 0x7c, 0x0f,0x71 ,0xb9 };
-static uint8_t CLIENT_MAC_ADDR[6] = { 0xa0, 0x88, 0xc2, 0x31, 0xf7, 0xde };
-static uint8_t SERVER_MAC_ADDR[6] = { 0xa0, 0x88, 0xc2, 0x32, 0x04, 0x30 };
+// static uint8_t CLIENT_MAC_ADDR[6] = { 0xa0, 0x88, 0xc2, 0x31, 0xf7, 0xde };
+// static uint8_t SERVER_MAC_ADDR[6] = { 0xa0, 0x88, 0xc2, 0x32, 0x04, 0x30 };
+
+// bf1 enp3s0f0s0
+unsigned char CLIENT_MAC_ADDR[6] = { 0x02,0x15,0x9e,0x7c,0x4d,0xad };
+// bf2 enp3s0f0s0
+unsigned char SERVER_MAC_ADDR[6] = { 0x02,0xbd,0xe9,0x97,0x48,0xd3 };
+
 void ctrl_c_handler(int) { stop_flag = true; }
 
 DEFINE_int32(threads, 1, "num_threads");
@@ -43,13 +49,13 @@ DEFINE_string(deviceName, "mlx5_0", "deviceName");
 DEFINE_int32(flow_udp_dst_port, 6666, "bind flow to udp dst port");
 DEFINE_int32(coreOffset, 0, "coreOffset");
 DEFINE_int32(pktSize, 1024, "packet size");
-DEFINE_bool(server, true, "server mode");
+DEFINE_bool(server, false, "server mode");
 
 static uint32_t NB_RXD = 1024;
 static uint32_t NB_TXD = 1024;
 static uint32_t PKT_BUF_SIZE = 2048;
-static uint32_t HANDLE_BATCH = 32;
-static uint32_t SEND_OUTSTANDING = 512;
+static uint32_t HANDLE_BATCH = 1;
+static uint32_t SEND_OUTSTANDING = 64;
 
 class WqHandler {
 public:
