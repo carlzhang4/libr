@@ -63,15 +63,15 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/HdrHistogram_c)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_vhca)
 
-# add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/dma_copy)
+add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/dma_copy)
 
 # add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rpcacc_micro)
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_split_send)
+# add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_split_send)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_raw_packet)
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_raw_packet_tso)
+# add_subdirectory(${CMAKE_SOURCE_DIR}/devx_bench/rdma_raw_packet_tso)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/extra)
 # add_executable(demo ${SRCS} demo.cpp)
