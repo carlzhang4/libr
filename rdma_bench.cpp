@@ -24,7 +24,7 @@ string DEVICE_NAME;
 int GID_INDEX;
 int NUMA_NODE;
 int BATCH_SIZE = 1;
-int OUTSTANDING = 48;
+int OUTSTANDING = 64;
 std::atomic<bool> stop_flag = false;
 std::atomic<double> total_bw = 0;
 void ctrl_c_handler(int) { stop_flag = true; }
@@ -149,7 +149,7 @@ void benchmark(NetParam &net_param) {
 	LOG_I("%-20s : %d", "HardwareConcurrency", num_cpus);
 	assert(NUM_THREADS <= num_cpus);
 
-	assert(NUM_PACK * PACK_SIZE < BUF_SIZE / 2);
+	BUF_SIZE = NUM_PACK * PACK_SIZE * 2;
 	size_t ops = size_t(1) * ITERATIONS * NUM_PACK;
 	LOG_I("OPS : [%ld]", ops);
 
@@ -217,7 +217,6 @@ DEFINE_int32(threads, 1, "num_threads");
 DEFINE_int32(nodeId, 0, "nodeId");
 DEFINE_string(serverIp, "", "serverIp");
 DEFINE_int32(coreOffset, 0, "coreOffset");
-DEFINE_int32(bufSize, 1073741824, "bufSize");
 DEFINE_int32(numPack, 1024, "numPack");
 DEFINE_string(deviceName, "mlx5_0", "deviceName");
 DEFINE_int32(gidIndex, 3, "gidIndex");
@@ -234,7 +233,6 @@ int main(int argc, char *argv[]) {
 	PACK_SIZE = FLAGS_packSize;
 	NUM_THREADS = FLAGS_threads;
 	CORE_OFFSET = FLAGS_coreOffset;
-	BUF_SIZE = FLAGS_bufSize;
 	NUM_PACK = FLAGS_numPack;
 	DEVICE_NAME = FLAGS_deviceName;
 	GID_INDEX = FLAGS_gidIndex;
@@ -248,6 +246,7 @@ int main(int argc, char *argv[]) {
 	net_param.gid_index = GID_INDEX;
 	net_param.numa_node = NUMA_NODE;
 	net_param.batch_size = BATCH_SIZE;
+	net_param.sge_per_wr = 1;
 	net_param.sock_port = FLAGS_port;
 
 	if (FLAGS_nodeId != 0) {
