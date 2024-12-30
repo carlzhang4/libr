@@ -283,6 +283,7 @@ int main(int argc, char *argv[]) {
     net_param.batch_size = BATCH_SIZE;
     net_param.sge_per_wr = 1;
     net_param.sock_port = FLAGS_port;
+    net_param.use_devx_context = false;
 
     if (FLAGS_nodeId != 0) {
         hdr_init(1000, 50000000, 3, &latency_hist);
