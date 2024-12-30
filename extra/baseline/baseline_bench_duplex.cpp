@@ -245,6 +245,7 @@ void sub_task(int thread_index) {
     net_param.batch_size = FLAGS_batch_size;
     net_param.sock_port = FLAGS_port + thread_index;
     net_param.ib_port = 1;
+    net_param.sge_per_wr = 1;
     net_param.page_size = sysconf(_SC_PAGESIZE);
     net_param.cacheline_size = get_cache_line_size();
     net_param.sockfd = new int[net_param.numNodes];

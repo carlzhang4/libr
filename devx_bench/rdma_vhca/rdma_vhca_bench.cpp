@@ -258,6 +258,7 @@ int main(int argc, char *argv[]) {
     net_param.gid_index = GID_INDEX;
     net_param.numa_node = NUMA_NODE;
     net_param.batch_size = BATCH_SIZE;
+    net_param.sge_per_wr = 1;
     net_param.sock_port = FLAGS_port;
 
     if (FLAGS_nodeId != 0) {
