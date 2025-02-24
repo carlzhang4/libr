@@ -366,7 +366,7 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 	attr_qp.qp_state = IBV_QPS_INIT;
 	attr_qp.pkey_index = 0;
 	attr_qp.port_num = net_param.ib_port;
-	attr_qp.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE;//for send
+	attr_qp.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ;//for send
 	assert(ibv_modify_qp(qp, &attr_qp, flags) == 0);
 
 	//setup connection
