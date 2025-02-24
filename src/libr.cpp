@@ -291,7 +291,7 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 	assert(context_index < net_param.num_contexts);
 	QpHandler *qp_handler;
 	ALLOCATE(qp_handler, QpHandler, 1);
-	int max_out_reads = 1;
+	int max_out_reads = 16;
 	int tx_depth = 128;
 	int rx_depth = 512;
 	uint32_t max_inline_size = 0;
