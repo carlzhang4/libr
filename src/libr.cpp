@@ -263,6 +263,7 @@ QpHandler *create_qp_rc(NetParam &net_param, void *buf, size_t size, struct Ping
 	info->rkey = mr->rkey;
 	info->out_reads = max_out_reads;
 	info->vaddr = reinterpret_cast<uintptr_t>(buf);
+	info->mtu = net_param.cur_mtu;
 	memcpy(info->gid.raw, temp_gid.raw, 16);
 
 	qp_handler->buf = reinterpret_cast<size_t> (buf);
@@ -487,7 +488,7 @@ void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongIn
 	attr.ah_attr.grh.traffic_class = 0;
 
 	//UD does not need below code
-	attr.path_mtu = net_param.cur_mtu;
+	attr.path_mtu = static_cast<enum ibv_mtu>(min(remote_info->mtu, local_info->mtu));
 	attr.dest_qp_num = remote_info->qpn;
 	attr.rq_psn = remote_info->psn;
 	flags |= (IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN);

@@ -49,6 +49,7 @@ struct PingPongInfo {
 	union ibv_gid		gid;
 	int					gid_index;
 	int					out_reads;
+	int 				mtu;
 };
 
 class QpHandler {
