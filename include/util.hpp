@@ -228,29 +228,13 @@ char *time_string();
 
 class TimeUtil {
 private:
-	int MAX_INFLIGHT;
-	int STEP;//1us divide into #STEP shares
-	int BUCKET_NUM;
 	int execute_once_flag;
-	double *start_arr;
-	size_t start_idx;
-	size_t end_idx;
-	int *buckets;
 public:
 	struct timespec cur_time;
 	double duration_us;
-	TimeUtil(int bucket_num = 1024, int step = 10, int max_inflight = 512) {
+	TimeUtil() {
 		execute_once_flag = 1;
 		duration_us = 0.0;
-
-		BUCKET_NUM = bucket_num;
-		STEP = step;
-		MAX_INFLIGHT = max_inflight;
-		start_arr = static_cast<double *>(malloc(max_inflight * sizeof(double)));
-		buckets = static_cast<int *>(malloc(bucket_num * sizeof(int)));
-		memset(buckets, 0, bucket_num * sizeof(int));
-		start_idx = 0;
-		end_idx = 0;
 	}
 	void start_once() {
 		if (execute_once_flag) {
@@ -262,42 +246,15 @@ public:
 		clock_gettime(CLOCK_MONOTONIC, &cur_time);
 		double t_us = 1.0 * (cur_time.tv_sec * 1e6 + cur_time.tv_nsec / 1e3);
 		duration_us -= t_us;
-
-		start_arr[start_idx % MAX_INFLIGHT] = t_us;
-		start_idx++;
 	}
 	void end() {
 		clock_gettime(CLOCK_MONOTONIC, &cur_time);
 		double t_us = 1.0 * (cur_time.tv_sec * 1e6 + cur_time.tv_nsec / 1e3);
 		duration_us += t_us;
-
-		double latency = t_us - start_arr[end_idx % MAX_INFLIGHT];
-		int l = static_cast<int>(latency * STEP);
-		if (l >= BUCKET_NUM) {
-			buckets[BUCKET_NUM - 1]++;
-		} else {
-			buckets[l]++;
-		}
-		end_idx++;
-	}
-	void show(string str) {
-		assert(start_idx == end_idx);
-		LOG_I("%s [%.2f] us, average [%.2f] us", str.c_str(), duration_us, duration_us / start_idx);
 	}
 	double get_seconds() {
 		// assert(start_idx == end_idx);
 		return duration_us / 1e6;
-	}
-	void show_percentage(double per, string str) {
-		size_t num = 0;
-		size_t div = static_cast<size_t>(per * start_idx);
-		for (int i = 0;i < BUCKET_NUM;i++) {
-			num += buckets[i];
-			if (num >= div) {
-				LOG_I("%s [%.2f] us", str.c_str(), 1.0 * i / STEP);
-				break;
-			}
-		}
 	}
 };
 
