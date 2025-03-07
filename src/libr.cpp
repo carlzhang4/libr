@@ -523,7 +523,8 @@ void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongIn
 	qp_handler.remote_buf = remote_info->vaddr;
 	qp_handler.remote_rkey = remote_info->rkey;
 
-	init_wr_base_send_recv(qp_handler);
+	// init_wr_base_send_recv(qp_handler);
+	init_wr_base_write(qp_handler);
 }
 
 void print_pingpong_info(struct PingPongInfo *info) {
@@ -549,6 +550,8 @@ void post_send(QpHandler &qp_handler, size_t offset, int length) {
 	}
 	qp_handler.send_wr->wr_id = offset;
 	qp_handler.send_wr->next = NULL;
+	qp_handler.send_wr->wr.rdma.remote_addr = qp_handler.remote_buf + offset;
+
 	// fuck https://github.com/linux-rdma/rdma-core/blob/6cd09097ad2eebde9a7fa3d3bb09a2cea6e3c2d6/providers/rxe/rxe.c#L1665-L1666
 	assert(ibv_post_send(qp_handler.qp, qp_handler.send_wr, &qp_handler.send_bar_wr) == 0);
 	// qp_handler.send_wr[0].send_flags = IBV_SEND_SIGNALED;
@@ -566,6 +569,7 @@ void post_send_batch(QpHandler &qp_handler, int batch_size, OffsetHandler &handl
 		}
 		qp_handler.send_wr[i].wr_id = handler.offset();
 		qp_handler.send_wr[i].next = NULL;
+		qp_handler.send_wr[i].wr.rdma.remote_addr = qp_handler.remote_buf + handler.offset();
 		if (handler.index() % SEND_CQ_BATCH == SEND_CQ_BATCH - 1) {
 			qp_handler.send_wr[i].send_flags = IBV_SEND_SIGNALED;
 		} else {
