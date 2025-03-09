@@ -1,13 +1,4 @@
-#include <iostream>
-#include <thread>
-#include <mutex>
-#include <cstdio>
-#include <stdio.h>
-#include <time.h>
-#include <atomic>
 #include <gflags/gflags.h>
-#include <queue> 
-#include <fstream>
 #include <hdr/hdr_histogram.h>
 
 #include "libr.hpp"
@@ -36,6 +27,9 @@ static uint8_t RSS_KEY[40] = { 0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
 // static uint8_t CLIENT_MAC_ADDR[6] = { 0xa0, 0x88, 0xc2, 0x31, 0xf7, 0xde };
 // static uint8_t SERVER_MAC_ADDR[6] = { 0xa0, 0x88, 0xc2, 0x32, 0x04, 0x30 };
 
+// client: sudo ./rdma_raw_packet_duplex_bench -deviceName mlx5_2
+// server: sudo ./rdma_raw_packet_duplex_bench -deviceName mlx5_2 -server
+
 // bf1 enp3s0f0s0
 unsigned char CLIENT_MAC_ADDR[6] = { 0x02,0x15,0x9e,0x7c,0x4d,0xad };
 // bf2 enp3s0f0s0
@@ -54,7 +48,7 @@ DEFINE_bool(server, false, "server mode");
 static uint32_t NB_RXD = 1024;
 static uint32_t NB_TXD = 1024;
 static uint32_t PKT_BUF_SIZE = 2048;
-static uint32_t HANDLE_BATCH = 1;
+static uint32_t HANDLE_BATCH = 8;
 static uint32_t SEND_OUTSTANDING = 64;
 
 class WqHandler {

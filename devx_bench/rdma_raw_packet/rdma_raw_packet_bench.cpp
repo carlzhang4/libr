@@ -17,6 +17,9 @@ bool IS_SERVER;
 
 std::atomic<bool> stop_flag = false;
 
+// client: sudo ./rdma_raw_packet_bench -deviceName mlx5_2
+// server: sudo ./rdma_raw_packet_bench -deviceName mlx5_2 -server
+
 // bf1 enp3s0f0s0
 unsigned char CLIENT_MAC_ADDR[6] = { 0x02,0x15,0x9e,0x7c,0x4d,0xad };
 // bf2 enp3s0f0s0
