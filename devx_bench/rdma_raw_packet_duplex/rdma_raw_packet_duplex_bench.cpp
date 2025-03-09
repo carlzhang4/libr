@@ -485,7 +485,7 @@ void benchmark(NetParam &net_param) {
     for (int i = 0;i < NUM_THREADS;i++) {
         bufs[i] = malloc_2m_numa(BUF_SIZE, net_param.numa_node);
         for (int j = 0;j < BUF_SIZE / static_cast<int>(sizeof(int));j++) {
-            (reinterpret_cast<int **> (bufs))[i][j] = 0;
+            (reinterpret_cast<int **>(bufs))[i][j] = 0;
         }
     }
 
