@@ -408,6 +408,105 @@ QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct Pin
 	return qp_handler;
 }
 
+
+QpHandler *create_qp_raw_packet(NetParam &net_param, void *buf, size_t size, uint32_t tx_depth, uint32_t rx_depth, int context_index) {
+	assert(context_index < net_param.num_contexts);
+	QpHandler *qp_handler;
+	ALLOCATE(qp_handler, QpHandler, 1);
+	uint32_t max_inline_size = 0;
+
+	int num_wrs = net_param.batch_size != 0 ? net_param.batch_size : 1;
+	int num_sges_per_wr = net_param.sge_per_wr != 0 ? net_param.sge_per_wr : 1;
+	int num_sges = num_wrs * num_sges_per_wr;
+	struct ibv_sge *send_sge_list;
+	struct ibv_sge *recv_sge_list;
+	struct ibv_send_wr *send_wr;
+	struct ibv_send_wr *send_bar_wr;
+	struct ibv_recv_wr *recv_wr;
+	struct ibv_recv_wr *recv_bar_wr;
+
+	struct ibv_pd *pd;
+	struct ibv_mr *mr;
+	struct ibv_cq *send_cq;
+	struct ibv_cq *recv_cq;
+	struct ibv_comp_channel *channel = NULL;
+	struct ibv_qp *qp;
+
+	int flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;//send/recv/read/write 
+
+	ALLOCATE(send_sge_list, struct ibv_sge, num_sges);
+	ALLOCATE(recv_sge_list, struct ibv_sge, num_sges);
+	ALLOCATE(send_wr, struct ibv_send_wr, num_wrs);
+	ALLOCATE(send_bar_wr, struct ibv_send_wr, 1);
+	ALLOCATE(recv_wr, struct ibv_recv_wr, num_wrs);
+	ALLOCATE(recv_bar_wr, struct ibv_recv_wr, 1);
+
+	//check valid mem
+	assert(size > static_cast<size_t>(net_param.page_size));
+	assert((reinterpret_cast<size_t>(buf)) % net_param.page_size == 0);
+
+	//create pd/mr/scq/rcq
+	assert(pd = ibv_alloc_pd(net_param.contexts[context_index]));
+	assert(mr = ibv_reg_mr(pd, buf, size, flags));
+	assert(send_cq = ibv_create_cq(net_param.contexts[context_index], tx_depth, NULL, channel, 0));
+	assert(recv_cq = ibv_create_cq(net_param.contexts[context_index], rx_depth, NULL, channel, 0));
+
+	//create qp
+	struct ibv_qp_init_attr attr;
+	memset(&attr, 0, sizeof(struct ibv_qp_init_attr));
+	attr.send_cq = send_cq;
+	attr.recv_cq = recv_cq;
+	attr.cap.max_inline_data = max_inline_size;
+	attr.cap.max_send_wr = tx_depth;
+	attr.cap.max_send_sge = num_sges_per_wr;
+	attr.cap.max_recv_wr = rx_depth;
+	attr.cap.max_recv_sge = num_sges_per_wr;
+	attr.qp_type = IBV_QPT_RAW_PACKET;
+	qp = ibv_create_qp(pd, &attr);
+	if (qp == NULL && errno == ENOMEM) {
+		fprintf(stderr, "Requested QP size might be too big. Try reducing TX depth and/or inline size.\n");
+		fprintf(stderr, "Current TX depth is %d and inline size is %d .\n", tx_depth, max_inline_size);
+	}
+	assert(max_inline_size <= attr.cap.max_inline_data);
+
+	//modify qp to init
+	struct ibv_qp_attr tx_qp_attr;
+	memset(&tx_qp_attr, 0, sizeof(tx_qp_attr));
+	tx_qp_attr.qp_state = IBV_QPS_INIT;
+	tx_qp_attr.port_num = 1;
+	assert(ibv_modify_qp(qp, &tx_qp_attr, IBV_QP_STATE | IBV_QP_PORT) == 0);
+
+	memset(&tx_qp_attr, 0, sizeof(tx_qp_attr));
+	tx_qp_attr.qp_state = IBV_QPS_RTR;
+	assert(ibv_modify_qp(qp, &tx_qp_attr, IBV_QP_STATE) == 0);
+
+	memset(&tx_qp_attr, 0, sizeof(tx_qp_attr));
+	tx_qp_attr.qp_state = IBV_QPS_RTS;
+	assert(ibv_modify_qp(qp, &tx_qp_attr, IBV_QP_STATE) == 0);
+
+
+	qp_handler->buf = reinterpret_cast<size_t> (buf);
+	qp_handler->send_cq = send_cq;
+	qp_handler->recv_cq = recv_cq;
+	qp_handler->max_inline_size = max_inline_size;
+	qp_handler->qp = qp;
+	qp_handler->pd = pd;
+	qp_handler->mr = mr;
+	qp_handler->send_sge_list = send_sge_list;
+	qp_handler->recv_sge_list = recv_sge_list;
+	qp_handler->send_wr = send_wr;
+	qp_handler->send_bar_wr = send_bar_wr;
+	qp_handler->recv_wr = recv_wr;
+	qp_handler->recv_bar_wr = recv_bar_wr;
+	qp_handler->num_sges = num_sges;
+	qp_handler->num_sges_per_wr = num_sges_per_wr;
+	qp_handler->num_wrs = num_wrs;
+	qp_handler->tx_depth = tx_depth;
+	qp_handler->rx_depth = rx_depth;
+
+	return qp_handler;
+}
+
 void init_wr_base_send_recv(QpHandler &qp_handler) {
 	//send
 	assert(qp_handler.num_wrs * qp_handler.num_sges_per_wr == qp_handler.num_sges);
@@ -523,8 +622,8 @@ void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongIn
 	qp_handler.remote_buf = remote_info->vaddr;
 	qp_handler.remote_rkey = remote_info->rkey;
 
-	// init_wr_base_send_recv(qp_handler);
-	init_wr_base_write(qp_handler);
+	init_wr_base_send_recv(qp_handler);
+	// init_wr_base_write(qp_handler);
 }
 
 void print_pingpong_info(struct PingPongInfo *info) {

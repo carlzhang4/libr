@@ -71,6 +71,8 @@ void connect_qp_rc(NetParam &net_param, QpHandler &qp_handler, struct PingPongIn
 
 QpHandler *create_qp_rc(NetParam &net_param, vhca_resource *resource, struct PingPongInfo *info, int context_index);
 
+QpHandler *create_qp_raw_packet(NetParam &net_param, void *buf, size_t size, uint32_t tx_depth, uint32_t rx_depth, int context_index);
+
 void print_pingpong_info(struct PingPongInfo *info);
 
 void post_send(QpHandler &qp_handler, size_t offset, int length);
