@@ -25,6 +25,7 @@ int GID_INDEX;
 int NUMA_NODE;
 int BATCH_SIZE = 1;
 int OUTSTANDING = 64;
+bool RECORD_LATENCY = false;
 std::atomic<bool> stop_flag = false;
 std::atomic<double> total_bw = 0;
 void ctrl_c_handler(int) { stop_flag = true; }
@@ -74,7 +75,7 @@ void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops
 	}
 	global_timer.end();
 	double duration = global_timer.get_seconds();
-	double speed = 8.0 * ops * PACK_SIZE / 1000 / 1000 / 1000 / duration;
+	double speed = 8.0 * recv_comp.index() * PACK_SIZE / 1000 / 1000 / 1000 / duration;
 
 	std::lock_guard<std::mutex> guard(IO_LOCK);
 	total_bw = total_bw + speed;
@@ -85,7 +86,7 @@ void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops
 
 void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops) {
 	sleep(2);
-	assert(latency_hist);
+	// assert(latency_hist);
 	wait_scheduling(thread_index, IO_LOCK);
 
 	(void)buf;
@@ -113,8 +114,10 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
 		}
 		for (int i = 0;i < ne_send;i++) {
 			assert(wc_send[i].status == IBV_WC_SUCCESS);
-			hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
-			timer_tail = (timer_tail + 1) % 128;
+			if (thread_index == 0 && RECORD_LATENCY) {
+				hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
+				timer_tail = (timer_tail + 1) % 128;
+			}
 			send_comp.step();
 		}
 		if (send.index() < ops && send.index() - send_comp.index() < tx_depth) {
@@ -128,8 +131,10 @@ void sub_task_client(int thread_index, QpHandler *handler, void *buf, size_t ops
 		ne_send = poll_send_cq(*handler, wc_send);
 		for (int i = 0;i < ne_send;i++) {
 			assert(wc_send[i].status == IBV_WC_SUCCESS);
-			hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
-			timer_tail = (timer_tail + 1) % 128;
+			if (thread_index == 0 && RECORD_LATENCY) {
+				hdr_record_value_atomic(latency_hist, (get_tsc() - timers[timer_tail]) * 10);
+				timer_tail = (timer_tail + 1) % 128;
+			}
 			send_comp.step();
 		}
 	}
@@ -159,7 +164,7 @@ void benchmark(NetParam &net_param) {
 	for (int i = 0;i < NUM_THREADS;i++) {
 		bufs[i] = malloc_2m_numa(BUF_SIZE, net_param.numa_node);
 		for (int j = 0;j < BUF_SIZE / static_cast<int>(sizeof(int));j++) {
-			(reinterpret_cast<int **> (bufs))[i][j] = 0;
+			(reinterpret_cast<int **>(bufs))[i][j] = j;
 		}
 	}
 
@@ -222,6 +227,7 @@ DEFINE_string(deviceName, "mlx5_0", "deviceName");
 DEFINE_int32(gidIndex, 3, "gidIndex");
 DEFINE_int32(numaNode, 0, "numaNode");
 DEFINE_int32(port, 6666, "bind_port");
+DEFINE_bool(recordLatency, false, "recordLatency");
 
 int main(int argc, char *argv[]) {
 	signal(SIGINT, ctrl_c_handler);
@@ -237,6 +243,7 @@ int main(int argc, char *argv[]) {
 	DEVICE_NAME = FLAGS_deviceName;
 	GID_INDEX = FLAGS_gidIndex;
 	NUMA_NODE = FLAGS_numaNode;
+	RECORD_LATENCY = FLAGS_recordLatency;
 
 	NetParam net_param;
 	net_param.numNodes = 2;
@@ -250,7 +257,7 @@ int main(int argc, char *argv[]) {
 	net_param.sock_port = FLAGS_port;
 	net_param.use_devx_context = false;
 
-	if (FLAGS_nodeId != 0) {
+	if (FLAGS_nodeId != 0 && RECORD_LATENCY) {
 		hdr_init(1000, 50000000, 3, &latency_hist);
 	}
 
@@ -259,7 +266,7 @@ int main(int argc, char *argv[]) {
 	roce_init(net_param, NUM_THREADS);
 	benchmark(net_param);
 
-	if (FLAGS_nodeId != 0) {
+	if (FLAGS_nodeId != 0 && RECORD_LATENCY) {
 		hdr_percentiles_print(latency_hist, stdout, 5, 10 * get_tsc_freq_per_ns(), CLASSIC);
 		hdr_close(latency_hist);
 	}
