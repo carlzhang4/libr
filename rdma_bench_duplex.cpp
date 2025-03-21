@@ -91,7 +91,7 @@ void sub_task_server(int thread_index, QpHandler *handler, void *buf, size_t ops
     }
     global_timer.end();
     double duration = global_timer.get_seconds();
-    double speed = 8.0 * ops * PACK_SIZE / 1000 / 1000 / 1000 / duration;
+    double speed = 8.0 * recv_comp.index() * PACK_SIZE / 1000 / 1000 / 1000 / duration;
 
     std::lock_guard<std::mutex> guard(IO_LOCK);
     LOG_I("Data verification success, thread [%d], duration [%f]s, throughput [%f] Gpbs", thread_index, duration, speed);
@@ -182,7 +182,7 @@ void benchmark(NetParam &net_param) {
     LOG_I("%-20s : %d", "HardwareConcurrency", num_cpus);
     assert(NUM_THREADS <= num_cpus);
 
-    assert(NUM_PACK * PACK_SIZE < BUF_SIZE / 2);
+    BUF_SIZE = NUM_PACK * PACK_SIZE * 2;
     size_t ops = size_t(1) * ITERATIONS * NUM_PACK;
     LOG_I("OPS : [%ld]", ops);
 
@@ -192,7 +192,7 @@ void benchmark(NetParam &net_param) {
     for (int i = 0;i < NUM_THREADS;i++) {
         bufs[i] = malloc_2m_numa(BUF_SIZE, net_param.numa_node);
         for (int j = 0;j < BUF_SIZE / static_cast<int>(sizeof(int));j++) {
-            (reinterpret_cast<int **> (bufs))[i][j] = 0;
+            (reinterpret_cast<int **>(bufs))[i][j] = 0;
         }
     }
 

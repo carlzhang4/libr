@@ -171,7 +171,7 @@ void sub_task_client(int thread_index, QpHandler *handler) {
                 handler->send_wr[i].wr_id = send.index();
                 if (i == HANDLE_BATCH - 1) {
                     handler->send_wr[i].next = nullptr;
-                    handler->send_wr[i].send_flags = IBV_SEND_SIGNALED;
+                    handler->send_wr[i].send_flags |= IBV_SEND_SIGNALED;
                 }
                 send.step();
             }
