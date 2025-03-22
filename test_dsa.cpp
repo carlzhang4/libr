@@ -13,9 +13,14 @@ DEFINE_int32(payload, 4096, "payload");
 DEFINE_int32(threads, 1, "threads");
 DEFINE_int32(numaNode, 0, "numaNode");
 DEFINE_uint64(batchSize, 32, "batchSize");
+DEFINE_bool(recordLatency, false, "recordLatency");
+
 size_t BUF_SIZE = 128 * 1024 * 1024;
 
 std::mutex IO_LOCK;
+
+hdr_histogram *latency_hist = nullptr;
+double scale_value = 10;
 
 void sub_task(int thread_index, void *src_buf, void *dst_buf) {
     wait_scheduling(thread_index, IO_LOCK);
@@ -41,7 +46,7 @@ void sub_task(int thread_index, void *src_buf, void *dst_buf) {
     OffsetHandler submit(BUF_SIZE / FLAGS_payload, FLAGS_payload, 0);
     OffsetHandler submit_comp(BUF_SIZE / FLAGS_payload, FLAGS_payload, 0);
 
-
+    std::vector<size_t>tsc_lists(FLAGS_batchSize, 0);
     global_timer.start();
     size_t ops = 10000000;
     while (submit_comp.index() < ops && !stop_flag) {
@@ -52,6 +57,9 @@ void sub_task(int thread_index, void *src_buf, void *dst_buf) {
             now_job->destination_first_ptr = reinterpret_cast<uint8_t *>(reinterpret_cast<uint64_t>(dst_buf) + submit.offset());
             now_job->destination_length = FLAGS_payload;
             status = dml_submit_job(now_job);
+            if (thread_index == 0 && FLAGS_recordLatency) {
+                tsc_lists[submit.index() % FLAGS_batchSize] = get_tsc();
+            }
             if (status != DML_STATUS_OK) {
                 printf("dml_submit_job failed\n");
                 exit(1);
@@ -62,6 +70,9 @@ void sub_task(int thread_index, void *src_buf, void *dst_buf) {
             dml_job_t *now_job = dml_jobs[submit_comp.index() % FLAGS_batchSize];
             status = dml_check_job(now_job);
             if (status == DML_STATUS_OK) {
+                if (thread_index == 0 && FLAGS_recordLatency) {
+                    hdr_record_value(latency_hist, (get_tsc() - tsc_lists[submit_comp.index() % FLAGS_batchSize]) * scale_value);
+                }
                 submit_comp.step();
             } else if (status == DML_STATUS_JOB_CORRUPTED) {
                 printf("dml_check_job failed\n");
@@ -116,5 +127,13 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, ctrl_c_handler);
 
     gflags::ParseCommandLineFlags(&argc, &argv, true);
+
+    if (FLAGS_recordLatency) {
+        hdr_init(1000, 1000000, 3, &latency_hist);
+    }
     benchmark();
+    if (FLAGS_recordLatency) {
+        hdr_percentiles_print(latency_hist, stdout, 5, 10 * get_tsc_freq_per_ns(), CLASSIC);
+        hdr_close(latency_hist);
+    }
 }
