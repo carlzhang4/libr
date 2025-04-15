@@ -84,11 +84,14 @@ add_executable(snap_bench ${SRCS} snap_bench.cpp)
 
 add_executable(rdma_bench_duplex ${SRCS} rdma_bench_duplex.cpp)
 
+add_executable(solar_bench ${SRCS} solar_bench.cpp)
+
 # target_link_libraries(demo ibverbs pthread numa)
 target_link_libraries(libr_test ${LIBRARIES})
 target_link_libraries(rdma_bench ${LIBRARIES})
 target_link_libraries(snap_bench ${LIBRARIES})
 target_link_libraries(rdma_bench_duplex ${LIBRARIES})
+target_link_libraries(solar_bench ${LIBRARIES})
 
 add_library(r SHARED ${SRCS})
 target_link_libraries(r ibverbs pthread numa hdr_histogram_static)
