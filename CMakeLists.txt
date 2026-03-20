@@ -35,6 +35,7 @@ set(SRCS
         ${CMAKE_SOURCE_DIR}/src/connection_manager.cpp
         ${CMAKE_SOURCE_DIR}/src/libr.cpp
         ${CMAKE_SOURCE_DIR}/src/util.cpp
+		${CMAKE_SOURCE_DIR}/src/rdma_chain.cpp
 		${CMAKE_SOURCE_DIR}/src/devx_device.cpp
 		${CMAKE_SOURCE_DIR}/src/devx_mr.cpp
 )
@@ -43,6 +44,7 @@ set(HEAD_FILES
 	${CMAKE_SOURCE_DIR}/include/libr.hpp
 	${CMAKE_SOURCE_DIR}/include/util.hpp
 	${CMAKE_SOURCE_DIR}/include/connection_manager.hpp
+	${CMAKE_SOURCE_DIR}/include/rdma_chain.hpp
 )
 
 include_directories("${CMAKE_SOURCE_DIR}/include")
@@ -84,6 +86,8 @@ add_executable(snap_bench ${SRCS} snap_bench.cpp)
 
 add_executable(rdma_bench_duplex ${SRCS} rdma_bench_duplex.cpp)
 
+add_executable(rdma_chain_example ${SRCS} rdma_chain_example.cpp)
+
 add_executable(solar_bench ${SRCS} solar_bench.cpp)
 
 # target_link_libraries(demo ibverbs pthread numa)
@@ -91,6 +95,7 @@ target_link_libraries(libr_test ${LIBRARIES})
 target_link_libraries(rdma_bench ${LIBRARIES})
 target_link_libraries(snap_bench ${LIBRARIES})
 target_link_libraries(rdma_bench_duplex ${LIBRARIES})
+target_link_libraries(rdma_chain_example ${LIBRARIES})
 target_link_libraries(solar_bench ${LIBRARIES})
 
 add_library(r SHARED ${SRCS})
